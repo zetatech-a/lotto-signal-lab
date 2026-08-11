@@ -52,6 +52,12 @@ def parse_draw_window(payload: object) -> list[Draw]:
     """Parse and validate every draw in an official multi-round response."""
     if not isinstance(payload, dict):
         raise CollectorError("official draw response must be a JSON object")
+    if "resultCode" not in payload or "resultMessage" not in payload:
+        raise CollectorError(
+            "official draw response must contain resultCode and resultMessage"
+        )
+    if payload["resultCode"] is not None or payload["resultMessage"] is not None:
+        raise CollectorError("official draw response reported an error")
     data = payload.get("data")
     if not isinstance(data, dict):
         raise CollectorError("official draw response data must be an object")
@@ -77,6 +83,12 @@ def parse_draw_window(payload: object) -> list[Draw]:
             raise CollectorError("six integer winning numbers are required")
         if type(bonus) is not int:
             raise CollectorError("bonus must be an integer")
+        if len(set(raw_numbers)) != 6:
+            raise CollectorError("winning numbers must be unique")
+        if any(number < 1 or number > 45 for number in raw_numbers):
+            raise CollectorError("winning numbers must be between 1 and 45")
+        if raw_numbers != sorted(raw_numbers):
+            raise CollectorError("winning numbers must be strictly ascending")
 
         raw_date = row.get("ltRflYmd")
         if not isinstance(raw_date, str) or re.fullmatch(r"[0-9]{8}", raw_date) is None:
@@ -87,7 +99,7 @@ def parse_draw_window(payload: object) -> list[Draw]:
             raise CollectorError("ltRflYmd must be a valid YYYYMMDD date") from exc
 
         try:
-            numbers = tuple(sorted(raw_numbers))
+            numbers = tuple(raw_numbers)
             draws.append(
                 Draw(
                     round=round_no,

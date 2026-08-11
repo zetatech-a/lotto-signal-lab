@@ -42,6 +42,29 @@ def test_parse_round_one_fixture() -> None:
     assert draw.draw_date.isoformat() == "2002-12-07"
 
 
+def test_verified_success_envelope_is_accepted() -> None:
+    payload = load_fixture("draw_round_1.json")
+    assert payload["resultCode"] is None
+    assert payload["resultMessage"] is None
+    assert parse_draw_window(payload)[0].round == 1
+
+
+@pytest.mark.parametrize("field", ["resultCode", "resultMessage"])
+def test_non_null_response_status_is_rejected(field: str) -> None:
+    payload = load_fixture("draw_round_1.json")
+    payload[field] = "ERROR"
+    with pytest.raises(CollectorError, match="reported an error"):
+        parse_draw_window(payload)
+
+
+@pytest.mark.parametrize("field", ["resultCode", "resultMessage"])
+def test_missing_response_status_is_rejected(field: str) -> None:
+    payload = load_fixture("draw_round_1.json")
+    del payload[field]
+    with pytest.raises(CollectorError, match="must contain resultCode and resultMessage"):
+        parse_draw_window(payload)
+
+
 def test_requested_row_is_selected_when_not_first_in_ten_row_window() -> None:
     draw = parse_draw_payload(load_fixture("draw_window_1236.json"), 1236)
     assert draw.numbers == (12, 18, 21, 29, 34, 38)
@@ -81,6 +104,8 @@ def test_malformed_neighboring_row_is_rejected() -> None:
     [(None, "must be a JSON object"), ({"data": []}, "data must be an object")],
 )
 def test_malformed_response_containers_are_rejected(payload: object, message: str) -> None:
+    if isinstance(payload, dict):
+        payload.update(resultCode=None, resultMessage=None)
     with pytest.raises(CollectorError, match=message):
         parse_draw_payload(payload, 1)
 
@@ -88,7 +113,9 @@ def test_malformed_response_containers_are_rejected(payload: object, message: st
 @pytest.mark.parametrize("value", [None, {}, "not a list"])
 def test_malformed_data_list_is_rejected(value: object) -> None:
     with pytest.raises(CollectorError, match=r"data\.list must be a list"):
-        parse_draw_payload({"data": {"list": value}}, 1)
+        parse_draw_payload(
+            {"resultCode": None, "resultMessage": None, "data": {"list": value}}, 1
+        )
 
 
 def test_invalid_date_is_rejected() -> None:
@@ -108,6 +135,14 @@ def test_duplicate_and_out_of_range_numbers_are_rejected(
     payload = load_fixture("draw_round_1.json")
     payload["data"]["list"][0][field] = value
     with pytest.raises(CollectorError, match=message):
+        parse_draw_payload(payload, 1)
+
+
+def test_unsorted_winning_numbers_are_rejected() -> None:
+    payload = load_fixture("draw_round_1.json")
+    row = payload["data"]["list"][0]
+    row["tm1WnNo"], row["tm2WnNo"] = row["tm2WnNo"], row["tm1WnNo"]
+    with pytest.raises(CollectorError, match="strictly ascending"):
         parse_draw_payload(payload, 1)
 
 
