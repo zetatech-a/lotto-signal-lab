@@ -5,6 +5,7 @@ import re
 import time
 from datetime import date
 from pathlib import Path
+from typing import Self
 
 import httpx
 from bs4 import BeautifulSoup
@@ -92,7 +93,7 @@ class DhlotteryCollector:
         if self._owns_client:
             self.client.close()
 
-    def __enter__(self) -> "DhlotteryCollector":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:

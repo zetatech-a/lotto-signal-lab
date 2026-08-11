@@ -12,7 +12,6 @@ from .statistics import frequency_table, monte_carlo_uniformity_test
 from .storage import DrawRepository
 from .strategy import build_strategy
 
-
 DEFAULT_DB = Path("data/lotto.db")
 
 
