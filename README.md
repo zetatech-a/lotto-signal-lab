@@ -107,7 +107,22 @@ lotto-lab backtest --strategy hybrid
 예를 들어 `mean_matches = 0.83`만 보고 개선이라고 판단하면 안 됩니다.
 `p-value`와 여러 기간에 대한 재현성을 같이 확인해야 합니다.
 
-### 5. 추천 번호 생성
+### 5. 다중 seed 및 기간 안정성 평가
+
+```bash
+lotto-lab compare --seeds 100 --period-size 200
+```
+
+단일 seed `backtest`는 기존 전략 실행 한 번과 Monte Carlo 귀무 기준을 보여줍니다. `compare`는
+동일한 관측 회차에 대해 `uniform/hot/cold/hybrid`를 여러 대응 seed로 실행합니다. `delta`는 각
+후보와 **같은 seed index의 uniform 실행** 간 차이입니다.
+
+2.5/97.5 백분위수는 관측된 과거 추첨열을 고정했을 때의 seed 변동성을 나타냅니다. 미래 로또
+성과의 95% 신뢰구간이 아니며 통계적 유의성을 뜻하지도 않습니다. 기간 블록은 시간에 따른
+안정성을 확인하는 평가 구간일 뿐입니다. 각 목표 회차의 학습 이력은 블록 경계에서 초기화하지
+않고 언제나 그 회차 전까지의 모든 추첨을 사용합니다.
+
+### 6. 추천 번호 생성
 
 ```bash
 lotto-lab recommend --strategy auto --count 5 --seed 20260811

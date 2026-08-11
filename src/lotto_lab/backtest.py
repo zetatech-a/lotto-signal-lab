@@ -21,6 +21,12 @@ class BacktestResult:
     simulations: int
 
 
+@dataclass(frozen=True, slots=True)
+class BacktestObservation:
+    round: int
+    matches: int
+
+
 def _match_count(ticket: tuple[int, ...], draw: Draw) -> int:
     return len(set(ticket).intersection(draw.numbers))
 
@@ -53,20 +59,11 @@ def walk_forward_backtest(
     simulations: int = 5000,
     seed: int = 20260811,
 ) -> BacktestResult:
-    if min_history < 20:
-        raise ValueError("min_history must be >= 20")
-    if len(draws) <= min_history:
-        raise ValueError("not enough draws for the requested min_history")
     if simulations < 100:
         raise ValueError("simulations must be >= 100")
 
-    matches: list[int] = []
-    for index in range(min_history, len(draws)):
-        # Strict walk-forward split: the target draw is never present in history.
-        history = draws[:index]
-        target = draws[index]
-        ticket = strategy.ticket(history, seed=seed + target.round)
-        matches.append(_match_count(ticket, target))
+    trace = walk_forward_trace(draws, strategy, min_history=min_history, seed=seed)
+    matches = [observation.matches for observation in trace]
 
     mean_matches = sum(matches) / len(matches)
     return BacktestResult(
@@ -85,3 +82,26 @@ def walk_forward_backtest(
         ),
         simulations=simulations,
     )
+
+
+def walk_forward_trace(
+    draws: list[Draw],
+    strategy: Strategy,
+    *,
+    min_history: int = 200,
+    seed: int = 20260811,
+) -> tuple[BacktestObservation, ...]:
+    """Return per-target results using all, and only, preceding draws as history."""
+    if min_history < 20:
+        raise ValueError("min_history must be >= 20")
+    if len(draws) <= min_history:
+        raise ValueError("not enough draws for the requested min_history")
+
+    observations: list[BacktestObservation] = []
+    for index in range(min_history, len(draws)):
+        # Strict walk-forward split: the target draw is never present in history.
+        history = draws[:index]
+        target = draws[index]
+        ticket = strategy.ticket(history, seed=seed + target.round)
+        observations.append(BacktestObservation(target.round, _match_count(ticket, target)))
+    return tuple(observations)

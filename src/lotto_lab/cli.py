@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .backtest import walk_forward_backtest
 from .collector import DhlotteryCollector, read_draws_csv
+from .evaluation import compare_strategies
 from .recommend import recommend, select_strategy
 from .statistics import frequency_table, monte_carlo_uniformity_test
 from .storage import DrawRepository
@@ -78,6 +79,19 @@ def command_backtest(args: argparse.Namespace) -> None:
         seed=args.seed,
     )
     print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
+
+
+def command_compare(args: argparse.Namespace) -> None:
+    draws = _repository(args.db).list_draws()
+    result = compare_strategies(
+        draws,
+        strategies=tuple(args.strategies),
+        seed_count=args.seeds,
+        base_seed=args.base_seed,
+        min_history=args.min_history,
+        period_size=args.period_size,
+    )
+    print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
 
 
 def command_recommend(args: argparse.Namespace) -> None:
@@ -160,6 +174,22 @@ def build_parser() -> argparse.ArgumentParser:
     backtest.add_argument("--simulations", type=int, default=5000)
     backtest.add_argument("--seed", type=int, default=20260811)
     backtest.set_defaults(func=command_backtest)
+
+    compare = subparsers.add_parser(
+        "compare", help="compare strategy stability across seeds and evaluation periods"
+    )
+    compare.add_argument("--db", default=str(DEFAULT_DB))
+    compare.add_argument(
+        "--strategies",
+        nargs="+",
+        choices=["uniform", "hot", "cold", "hybrid"],
+        default=["uniform", "hot", "cold", "hybrid"],
+    )
+    compare.add_argument("--seeds", type=int, default=100)
+    compare.add_argument("--base-seed", type=int, default=20260811)
+    compare.add_argument("--min-history", type=int, default=200)
+    compare.add_argument("--period-size", type=int, default=200)
+    compare.set_defaults(func=command_compare)
 
     recommendation = subparsers.add_parser("recommend", help="generate reproducible tickets")
     recommendation.add_argument("--db", default=str(DEFAULT_DB))

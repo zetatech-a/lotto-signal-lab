@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "lotto-signal-lab"
-version = "0.1.0"
+version = "0.2.0"
 description = "Reproducible Lotto 6/45 data collection, statistics, walk-forward backtesting, and recommendation experiments."
 readme = "README.md"
 requires-python = ">=3.11"
