@@ -27,6 +27,8 @@ jobs:
             lotto-db-
       - name: Sync draws
         run: lotto-lab sync
+      - name: Validate draws
+        run: lotto-lab validate
       - name: Generate report files
         run: |
           mkdir -p reports

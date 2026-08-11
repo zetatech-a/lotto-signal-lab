@@ -119,9 +119,10 @@ class DrawRepository:
         expected = list(range(1, official_latest_round + 1))
         if rounds != expected:
             missing = sorted(set(expected) - set(rounds))
+            extra = sorted(set(rounds) - set(expected))
             raise ValueError(
                 "draw round sequence is invalid: "
-                f"missing={missing[:20]}, ordered={rounds == sorted(rounds)}"
+                f"missing={missing[:20]}, extra={extra[:20]}"
             )
         if not draws or draws[-1].round != official_latest_round:
             raise ValueError("stored latest round does not match the official latest round")

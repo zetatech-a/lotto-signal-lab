@@ -13,11 +13,14 @@ from bs4 import BeautifulSoup
 from .models import Draw
 from .storage import DrawRepository
 
-WIN_NUMBER_PAGE_URL = "https://www.dhlottery.co.kr/lt645/winNumber"
-
-# Compatibility endpoint used by older versions of the official site. Its continued
-# availability is not assumed; unexpected responses fail loudly.
-LEGACY_JSON_URL = "https://www.dhlottery.co.kr/common.do"
+RESULT_PAGE_URL = "https://www.dhlottery.co.kr/lt645/result"
+DRAW_JSON_URL = "https://www.dhlottery.co.kr/lt645/selectPstLt645InfoNew.do"
+DRAW_JSON_HEADERS = {
+    "Accept": "application/json, text/javascript, */*; q=0.01",
+    "Ajax": "true",
+    "X-Requested-With": "XMLHttpRequest",
+    "Referer": RESULT_PAGE_URL,
+}
 
 ROUND_PATTERN = re.compile(r"^\s*(\d+)\s*회\s*$")
 
@@ -45,25 +48,80 @@ def parse_latest_round(html: str) -> int:
     return max(rounds)
 
 
-def parse_legacy_payload(payload: dict[str, object]) -> Draw:
-    if str(payload.get("returnValue", "")).lower() != "success":
-        raise CollectorError(f"official compatibility endpoint returned failure: {payload!r}")
+def parse_draw_window(payload: object) -> list[Draw]:
+    """Parse and validate every draw in an official multi-round response."""
+    if not isinstance(payload, dict):
+        raise CollectorError("official draw response must be a JSON object")
+    if "resultCode" not in payload or "resultMessage" not in payload:
+        raise CollectorError(
+            "official draw response must contain resultCode and resultMessage"
+        )
+    if payload["resultCode"] is not None or payload["resultMessage"] is not None:
+        raise CollectorError("official draw response reported an error")
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        raise CollectorError("official draw response data must be an object")
+    rows = data.get("list")
+    if not isinstance(rows, list):
+        raise CollectorError("official draw response data.list must be a list")
 
+    draws: list[Draw] = []
+    seen_rounds: set[int] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            raise CollectorError("every data.list row must be an object")
+        round_no = row.get("ltEpsd")
+        if type(round_no) is not int or round_no < 1:
+            raise CollectorError("ltEpsd must be an integer >= 1")
+        if round_no in seen_rounds:
+            raise CollectorError(f"duplicate round {round_no} in data.list")
+        seen_rounds.add(round_no)
+
+        raw_numbers = [row.get(f"tm{i}WnNo") for i in range(1, 7)]
+        bonus = row.get("bnsWnNo")
+        if any(type(number) is not int for number in raw_numbers):
+            raise CollectorError("six integer winning numbers are required")
+        if type(bonus) is not int:
+            raise CollectorError("bonus must be an integer")
+        if len(set(raw_numbers)) != 6:
+            raise CollectorError("winning numbers must be unique")
+        if any(number < 1 or number > 45 for number in raw_numbers):
+            raise CollectorError("winning numbers must be between 1 and 45")
+        if raw_numbers != sorted(raw_numbers):
+            raise CollectorError("winning numbers must be strictly ascending")
+
+        raw_date = row.get("ltRflYmd")
+        if not isinstance(raw_date, str) or re.fullmatch(r"[0-9]{8}", raw_date) is None:
+            raise CollectorError("ltRflYmd must be a valid YYYYMMDD date")
+        try:
+            draw_date = date(int(raw_date[:4]), int(raw_date[4:6]), int(raw_date[6:]))
+        except ValueError as exc:
+            raise CollectorError("ltRflYmd must be a valid YYYYMMDD date") from exc
+
+        try:
+            numbers = tuple(raw_numbers)
+            draws.append(
+                Draw(
+                    round=round_no,
+                    draw_date=draw_date,
+                    numbers=numbers,  # type: ignore[arg-type]
+                    bonus=bonus,
+                )
+            )
+        except ValueError as exc:
+            raise CollectorError(f"invalid draw values for round {round_no}: {exc}") from exc
+    return draws
+
+
+def parse_draw_payload(payload: object, requested_round: int) -> Draw:
+    """Parse a response and return its exact requested round."""
+    draws = parse_draw_window(payload)
     try:
-        round_no = int(payload["drwNo"])
-        numbers = tuple(sorted(int(payload[f"drwtNo{i}"]) for i in range(1, 7)))
-        bonus = int(payload["bnusNo"])
-        raw_date = str(payload.get("drwNoDate") or "")
-        draw_date = date.fromisoformat(raw_date) if raw_date else None
-    except (KeyError, TypeError, ValueError) as exc:
-        raise CollectorError("unexpected draw payload shape") from exc
-
-    return Draw(
-        round=round_no,
-        draw_date=draw_date,
-        numbers=numbers,  # type: ignore[arg-type]
-        bonus=bonus,
-    )
+        return next(draw for draw in draws if draw.round == requested_round)
+    except StopIteration as exc:
+        raise CollectorError(
+            f"requested round {requested_round} is missing from data.list"
+        ) from exc
 
 
 class DhlotteryCollector:
@@ -125,45 +183,53 @@ class DhlotteryCollector:
         raise CollectorError(f"request failed after retries: {url}") from last_error
 
     def latest_round(self) -> int:
-        response = self._get(WIN_NUMBER_PAGE_URL)
+        response = self._get(RESULT_PAGE_URL)
         return parse_latest_round(response.text)
 
     def fetch_draw(self, round_no: int) -> Draw:
         if round_no < 1:
             raise ValueError("round_no must be >= 1")
 
+        draws = self._fetch_draw_window(round_no)
+        return next(draw for draw in draws if draw.round == round_no)
+
+    def _fetch_draw_window(self, round_no: int) -> list[Draw]:
         response = self._get(
-            LEGACY_JSON_URL,
-            params={"method": "getLottoNumber", "drwNo": round_no},
+            DRAW_JSON_URL,
+            params={"srchDir": "center", "srchLtEpsd": round_no},
+            headers=DRAW_JSON_HEADERS,
         )
 
         try:
             payload = response.json()
         except ValueError as exc:
             raise CollectorError(
-                "the official compatibility JSON endpoint is unavailable or changed; "
-                "the current official per-round contract requires live verification"
+                "the official draw endpoint returned invalid JSON"
             ) from exc
-
-        if not isinstance(payload, dict):
-            raise CollectorError("unexpected JSON response type")
-        draw = parse_legacy_payload(payload)
-        if draw.round != round_no:
-            raise CollectorError(
-                f"official endpoint returned round {draw.round} for requested round {round_no}"
-            )
-        return draw
+        draws = parse_draw_window(payload)
+        if not any(draw.round == round_no for draw in draws):
+            raise CollectorError(f"requested round {round_no} is missing from data.list")
+        return draws
 
     def sync(self, repository: DrawRepository) -> tuple[int, int]:
         repository.initialize()
         latest = self.latest_round()
         stored_rounds = set(repository.list_rounds())
-        missing_rounds = [
+        missing_rounds = {
             round_no for round_no in range(1, latest + 1) if round_no not in stored_rounds
-        ]
-        for round_no in missing_rounds:
-            draw = self.fetch_draw(round_no)
-            repository.upsert(draw, source="dhlottery")
+        }
+        while missing_rounds:
+            requested_round = min(missing_rounds)
+            window = self._fetch_draw_window(requested_round)
+            new_draws = [
+                draw for draw in window if draw.round <= latest and draw.round in missing_rounds
+            ]
+            if not new_draws:
+                raise CollectorError(
+                    f"response for round {requested_round} made no sync progress"
+                )
+            repository.upsert_many(new_draws, source="dhlottery")
+            missing_rounds.difference_update(draw.round for draw in new_draws)
             if self.delay_seconds:
                 time.sleep(self.delay_seconds)
 

@@ -1,0 +1,19 @@
+{
+  "resultCode": null,
+  "resultMessage": null,
+  "data": {
+    "list": [
+      {
+        "ltEpsd": 1,
+        "tm1WnNo": 10,
+        "tm2WnNo": 23,
+        "tm3WnNo": 29,
+        "tm4WnNo": 33,
+        "tm5WnNo": 37,
+        "tm6WnNo": 40,
+        "bnsWnNo": 16,
+        "ltRflYmd": "20021207"
+      }
+    ]
+  }
+}

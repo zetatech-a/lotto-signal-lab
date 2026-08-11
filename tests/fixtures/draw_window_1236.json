@@ -1,0 +1,10 @@
+{
+  "resultCode": null,
+  "resultMessage": null,
+  "data": {
+    "list": [
+      {"ltEpsd": 1235, "tm1WnNo": 1, "tm2WnNo": 2, "tm3WnNo": 3, "tm4WnNo": 4, "tm5WnNo": 5, "tm6WnNo": 6, "bnsWnNo": 7, "ltRflYmd": "20260801"},
+      {"ltEpsd": 1236, "tm1WnNo": 12, "tm2WnNo": 18, "tm3WnNo": 21, "tm4WnNo": 29, "tm5WnNo": 34, "tm6WnNo": 38, "bnsWnNo": 10, "ltRflYmd": "20260808"}
+    ]
+  }
+}

@@ -33,3 +33,20 @@ def test_validate_integrity_rejects_missing_round(tmp_path) -> None:
         assert "missing=[1]" in str(exc)
     else:
         raise AssertionError("missing round was accepted")
+
+
+def test_validate_integrity_reports_missing_and_extra_rounds(tmp_path) -> None:
+    repository = DrawRepository(tmp_path / "lotto.db")
+    repository.initialize()
+    repository.upsert_many(
+        [Draw(1, (1, 2, 3, 4, 5, 6), 7), Draw(3, (2, 3, 4, 5, 6, 7), 8)],
+        source="test",
+    )
+
+    try:
+        repository.validate_integrity(2)
+    except ValueError as exc:
+        assert "missing=[2]" in str(exc)
+        assert "extra=[3]" in str(exc)
+    else:
+        raise AssertionError("missing and extra rounds were accepted")
