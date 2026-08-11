@@ -5,6 +5,7 @@ import re
 import time
 from datetime import date
 from pathlib import Path
+from typing import Self
 
 import httpx
 from bs4 import BeautifulSoup
@@ -12,11 +13,10 @@ from bs4 import BeautifulSoup
 from .models import Draw
 from .storage import DrawRepository
 
-RESULT_PAGE_URL = "https://www.dhlottery.co.kr/lt645/result"
+WIN_NUMBER_PAGE_URL = "https://www.dhlottery.co.kr/lt645/winNumber"
 
-# Compatibility endpoint used by older versions of the official site.
-# The public website can change without notice, so this endpoint is intentionally
-# isolated here and must never be treated as a stable public API contract.
+# Compatibility endpoint used by older versions of the official site. Its continued
+# availability is not assumed; unexpected responses fail loudly.
 LEGACY_JSON_URL = "https://www.dhlottery.co.kr/common.do"
 
 ROUND_PATTERN = re.compile(r"^\s*(\d+)\s*회\s*$")
@@ -93,7 +93,7 @@ class DhlotteryCollector:
         if self._owns_client:
             self.client.close()
 
-    def __enter__(self) -> "DhlotteryCollector":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
@@ -125,7 +125,7 @@ class DhlotteryCollector:
         raise CollectorError(f"request failed after retries: {url}") from last_error
 
     def latest_round(self) -> int:
-        response = self._get(RESULT_PAGE_URL)
+        response = self._get(WIN_NUMBER_PAGE_URL)
         return parse_latest_round(response.text)
 
     def fetch_draw(self, round_no: int) -> Draw:
@@ -141,23 +141,27 @@ class DhlotteryCollector:
             payload = response.json()
         except ValueError as exc:
             raise CollectorError(
-                "the official compatibility JSON endpoint is unavailable or changed. "
-                "Use `lotto-lab import-csv` as a temporary fallback and update "
-                "`collector.py` after inspecting the official site's current network contract."
+                "the official compatibility JSON endpoint is unavailable or changed; "
+                "the current official per-round contract requires live verification"
             ) from exc
 
         if not isinstance(payload, dict):
             raise CollectorError("unexpected JSON response type")
-        return parse_legacy_payload(payload)
+        draw = parse_legacy_payload(payload)
+        if draw.round != round_no:
+            raise CollectorError(
+                f"official endpoint returned round {draw.round} for requested round {round_no}"
+            )
+        return draw
 
     def sync(self, repository: DrawRepository) -> tuple[int, int]:
         repository.initialize()
         latest = self.latest_round()
-        current = repository.max_round() or 0
-        if current >= latest:
-            return current, latest
-
-        for round_no in range(current + 1, latest + 1):
+        stored_rounds = set(repository.list_rounds())
+        missing_rounds = [
+            round_no for round_no in range(1, latest + 1) if round_no not in stored_rounds
+        ]
+        for round_no in missing_rounds:
             draw = self.fetch_draw(round_no)
             repository.upsert(draw, source="dhlottery")
             if self.delay_seconds:

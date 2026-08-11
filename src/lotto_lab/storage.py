@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterable
 from datetime import date
 from pathlib import Path
-from typing import Iterable
 
 from .models import Draw
-
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS draws (
@@ -103,7 +102,34 @@ class DrawRepository:
         value = row["max_round"] if row else None
         return int(value) if value is not None else None
 
+    def list_rounds(self) -> list[int]:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT round FROM draws ORDER BY round ASC").fetchall()
+        return [int(row["round"]) for row in rows]
+
     def count(self) -> int:
         with self._connect() as connection:
             row = connection.execute("SELECT COUNT(*) AS count FROM draws").fetchone()
         return int(row["count"])
+
+    def validate_integrity(self, official_latest_round: int) -> dict[str, int | bool]:
+        """Validate the complete, ordered local series against the official latest round."""
+        draws = self.list_draws()
+        rounds = [draw.round for draw in draws]
+        expected = list(range(1, official_latest_round + 1))
+        if rounds != expected:
+            missing = sorted(set(expected) - set(rounds))
+            raise ValueError(
+                "draw round sequence is invalid: "
+                f"missing={missing[:20]}, ordered={rounds == sorted(rounds)}"
+            )
+        if not draws or draws[-1].round != official_latest_round:
+            raise ValueError("stored latest round does not match the official latest round")
+        # Draw construction in list_draws validates number count, uniqueness, ranges, and bonus.
+        return {
+            "valid": True,
+            "rows": len(draws),
+            "first_round": draws[0].round,
+            "latest_round": draws[-1].round,
+            "official_latest_round": official_latest_round,
+        }

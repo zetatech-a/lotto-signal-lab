@@ -10,3 +10,26 @@ def test_repository_round_trip(tmp_path) -> None:
     draws = repository.list_draws()
     assert len(draws) == 1
     assert draws[0].round == 1
+
+
+def test_validate_integrity(tmp_path) -> None:
+    repository = DrawRepository(tmp_path / "lotto.db")
+    repository.initialize()
+    repository.upsert_many(
+        [Draw(1, (1, 2, 3, 4, 5, 6), 7), Draw(2, (2, 3, 4, 5, 6, 7), 8)],
+        source="test",
+    )
+    assert repository.validate_integrity(2)["rows"] == 2
+
+
+def test_validate_integrity_rejects_missing_round(tmp_path) -> None:
+    repository = DrawRepository(tmp_path / "lotto.db")
+    repository.initialize()
+    repository.upsert(Draw(2, (2, 3, 4, 5, 6, 7), 8), source="test")
+
+    try:
+        repository.validate_integrity(2)
+    except ValueError as exc:
+        assert "missing=[1]" in str(exc)
+    else:
+        raise AssertionError("missing round was accepted")
