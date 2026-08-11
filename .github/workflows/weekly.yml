@@ -1,0 +1,42 @@
+name: Weekly Lotto Research Report
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Saturday 23:30 KST == Saturday 14:30 UTC
+    - cron: "30 14 * * 6"
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e .
+      - name: Restore incremental draw database
+        uses: actions/cache@v4
+        with:
+          path: data/lotto.db
+          key: lotto-db-${{ github.run_id }}
+          restore-keys: |
+            lotto-db-
+      - name: Sync draws
+        run: lotto-lab sync
+      - name: Generate report files
+        run: |
+          mkdir -p reports
+          lotto-lab stats --uniformity --simulations 5000 > reports/stats.json
+          lotto-lab backtest --strategy uniform > reports/backtest-uniform.json
+          lotto-lab backtest --strategy hot > reports/backtest-hot.json
+          lotto-lab backtest --strategy cold > reports/backtest-cold.json
+          lotto-lab backtest --strategy hybrid > reports/backtest-hybrid.json
+          lotto-lab recommend --strategy auto --count 10 > reports/recommendations.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lotto-research-report
+          path: reports/
