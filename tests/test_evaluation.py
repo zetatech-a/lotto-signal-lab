@@ -6,6 +6,7 @@ from lotto_lab.backtest import BacktestObservation, walk_forward_trace
 from lotto_lab.evaluation import compare_strategies, derive_seed
 from lotto_lab.models import Draw
 from lotto_lab.statistics import random_match_probabilities
+from lotto_lab.strategy import FrequencyStrategy
 
 
 def make_draws(rounds: int = 31) -> list[Draw]:
@@ -55,6 +56,39 @@ def test_different_base_seed_changes_stochastic_results() -> None:
     assert first["aggregate_strategy_results"] != second["aggregate_strategy_results"]
 
 
+def test_frequency_weights_are_computed_once_per_target_not_seed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    histories: list[tuple[int, ...]] = []
+    original_weights = FrequencyStrategy.weights
+
+    def recording_weights(
+        self: FrequencyStrategy, history: list[Draw]
+    ) -> dict[int, float]:
+        histories.append(tuple(draw.round for draw in history))
+        return original_weights(self, history)
+
+    monkeypatch.setattr(FrequencyStrategy, "weights", recording_weights)
+    compare_strategies(
+        make_draws(),
+        strategies=("uniform", "hot"),
+        seed_count=2,
+        min_history=20,
+    )
+    two_seed_histories = list(histories)
+    histories.clear()
+    compare_strategies(
+        make_draws(),
+        strategies=("uniform", "hot"),
+        seed_count=7,
+        min_history=20,
+    )
+
+    expected = [tuple(range(1, target_round)) for target_round in range(21, 32)]
+    assert two_seed_histories == expected
+    assert histories == expected
+
+
 def test_uniform_paired_delta_is_zero() -> None:
     result = compare_strategies(
         make_draws(), strategies=("uniform",), seed_count=3, min_history=20
@@ -81,6 +115,10 @@ def test_candidate_deltas_pair_corresponding_seed_runs(monkeypatch: pytest.Monke
         return (BacktestObservation(round=21, matches=matches),)
 
     monkeypatch.setattr("lotto_lab.evaluation.walk_forward_trace", fake_trace)
+    monkeypatch.setattr(
+        "lotto_lab.evaluation.build_strategy",
+        lambda name: type("NamedStrategy", (), {"name": name})(),
+    )
     result = compare_strategies(
         make_draws(),
         strategies=("uniform", "hot"),
@@ -95,6 +133,45 @@ def test_candidate_deltas_pair_corresponding_seed_runs(monkeypatch: pytest.Monke
     assert aggregate["delta_mean_matches_p025"] == pytest.approx(-0.95)
     assert aggregate["candidate_equal_seed_fraction"] == pytest.approx(2 / 3)
     assert aggregate["candidate_worse_seed_fraction"] == pytest.approx(1 / 3)
+
+
+def test_period_deltas_pair_corresponding_seed_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    base_seed = 91
+    run_seeds = [derive_seed(base_seed, index) for index in range(3)]
+    matches = {
+        "uniform": dict(zip(run_seeds, ((0, 0), (1, 1), (3, 3)))),
+        "hot": dict(zip(run_seeds, ((0, 0), (0, 0), (3, 3)))),
+    }
+
+    def fake_trace(
+        draws: list[Draw], strategy: object, *, min_history: int, seed: int
+    ) -> tuple[BacktestObservation, ...]:
+        del draws, min_history
+        values = matches[getattr(strategy, "name")][seed]
+        return tuple(
+            BacktestObservation(round=round_no, matches=value)
+            for round_no, value in zip((21, 22), values)
+        )
+
+    monkeypatch.setattr("lotto_lab.evaluation.walk_forward_trace", fake_trace)
+    monkeypatch.setattr(
+        "lotto_lab.evaluation.build_strategy",
+        lambda name: type("NamedStrategy", (), {"name": name})(),
+    )
+    result = compare_strategies(
+        make_draws(),
+        strategies=("uniform", "hot"),
+        seed_count=3,
+        base_seed=base_seed,
+        min_history=20,
+        period_size=2,
+    )
+
+    period = result["period_results"]["hot"][0]
+    assert period["seed_runs"] == 3
+    assert period["delta_mean_matches_vs_uniform_p025"] == pytest.approx(-0.95)
+    assert period["candidate_equal_seed_fraction"] == pytest.approx(2 / 3)
+    assert period["candidate_worse_seed_fraction"] == pytest.approx(1 / 3)
 
 
 def test_periods_cover_targets_once_and_include_final_short_block() -> None:
@@ -112,6 +189,8 @@ def test_periods_cover_targets_once_and_include_final_short_block() -> None:
     ]
     assert covered == list(range(21, 32))
     assert sum(item["target_rounds"] for item in periods) == 11
+    assert periods[-1]["seed_runs"] == 2
+    assert periods[-1]["delta_mean_matches_vs_uniform_p025"] == 0
 
 
 def test_theoretical_baselines_use_exact_probabilities() -> None:

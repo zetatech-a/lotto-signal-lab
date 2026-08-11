@@ -22,3 +22,25 @@ def test_frequency_strategy_returns_valid_ticket() -> None:
     assert len(ticket) == 6
     assert len(set(ticket)) == 6
     assert all(1 <= number <= 45 for number in ticket)
+
+
+def test_frequency_ticket_is_preserved_after_weight_separation() -> None:
+    strategy = FrequencyStrategy(mode="hot")
+    history = make_history(37)
+    assert strategy.ticket(history, seed=999) == (4, 7, 22, 26, 36, 40)
+    assert strategy.ticket_from_weights(strategy.weights(history), seed=999) == (
+        4,
+        7,
+        22,
+        26,
+        36,
+        40,
+    )
+
+
+def test_frequency_sampling_varies_by_seed() -> None:
+    strategy = FrequencyStrategy(mode="hybrid")
+    weights = strategy.weights(make_history(37))
+    assert strategy.ticket_from_weights(weights, seed=1) != strategy.ticket_from_weights(
+        weights, seed=2
+    )

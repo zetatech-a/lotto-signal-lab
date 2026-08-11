@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from .backtest import BacktestObservation, walk_forward_trace
 from .models import Draw
 from .statistics import random_match_probabilities
-from .strategy import build_strategy
+from .strategy import FrequencyStrategy, build_strategy
 
 INTERVAL_INTERPRETATION = (
     "The 2.5th and 97.5th percentiles describe seed variability conditional on the "
@@ -61,6 +61,25 @@ def _period_slices(rounds: tuple[int, ...], period_size: int) -> list[tuple[int,
     ]
 
 
+def _frequency_traces(
+    draws: list[Draw],
+    strategy: FrequencyStrategy,
+    run_seeds: list[int],
+    *,
+    min_history: int,
+) -> list[tuple[BacktestObservation, ...]]:
+    """Evaluate one frequency strategy while deriving each target's weights once."""
+    runs: list[list[BacktestObservation]] = [[] for _ in run_seeds]
+    for index in range(min_history, len(draws)):
+        target = draws[index]
+        weights = strategy.weights(draws[:index])
+        for run, run_seed in zip(runs, run_seeds):
+            ticket = strategy.ticket_from_weights(weights, seed=run_seed + target.round)
+            matches = len(set(ticket).intersection(target.numbers))
+            run.append(BacktestObservation(target.round, matches))
+    return [tuple(run) for run in runs]
+
+
 def compare_strategies(
     draws: list[Draw],
     *,
@@ -84,14 +103,20 @@ def compare_strategies(
     traces: dict[str, list[tuple[BacktestObservation, ...]]] = {
         name: [] for name in strategies
     }
-    for seed_index in range(seed_count):
-        run_seed = derive_seed(base_seed, seed_index)
-        for name in strategies:
-            traces[name].append(
-                walk_forward_trace(
-                    draws, build_strategy(name), min_history=min_history, seed=run_seed
-                )
+    run_seeds = [derive_seed(base_seed, seed_index) for seed_index in range(seed_count)]
+    for name in strategies:
+        strategy = build_strategy(name)
+        if isinstance(strategy, FrequencyStrategy):
+            traces[name] = _frequency_traces(
+                draws, strategy, run_seeds, min_history=min_history
             )
+        else:
+            for run_seed in run_seeds:
+                traces[name].append(
+                    walk_forward_trace(
+                        draws, strategy, min_history=min_history, seed=run_seed
+                    )
+                )
 
     metrics = {name: [_metrics(trace) for trace in runs] for name, runs in traces.items()}
     baseline = metrics["uniform"]
@@ -110,6 +135,8 @@ def compare_strategies(
             "delta_mean_matches_p025": _percentile(mean_deltas, 0.025),
             "delta_mean_matches_p975": _percentile(mean_deltas, 0.975),
             "delta_hit_3_plus_rate_mean": statistics.fmean(hit_deltas),
+            "delta_hit_3_plus_rate_p025": _percentile(hit_deltas, 0.025),
+            "delta_hit_3_plus_rate_p975": _percentile(hit_deltas, 0.975),
             "candidate_better_seed_fraction": sum(value > 0 for value in mean_deltas) / seed_count,
             "candidate_equal_seed_fraction": sum(value == 0 for value in mean_deltas) / seed_count,
             "candidate_worse_seed_fraction": sum(value < 0 for value in mean_deltas) / seed_count,
@@ -120,18 +147,41 @@ def compare_strategies(
     for name in strategies:
         blocks = []
         for start, end in _period_slices(target_rounds, period_size):
-            candidate_values = [item.matches for trace in traces[name] for item in trace[start:end]]
-            baseline_values = [item.matches for trace in traces["uniform"] for item in trace[start:end]]
+            candidate_metrics = [_metrics(trace[start:end]) for trace in traces[name]]
+            baseline_metrics = [_metrics(trace[start:end]) for trace in traces["uniform"]]
+            mean_values = [run.mean_matches for run in candidate_metrics]
+            hit_values = [run.hit_3_plus_rate for run in candidate_metrics]
+            mean_deltas = [
+                run.mean_matches - base.mean_matches
+                for run, base in zip(candidate_metrics, baseline_metrics)
+            ]
+            hit_deltas = [
+                run.hit_3_plus_rate - base.hit_3_plus_rate
+                for run, base in zip(candidate_metrics, baseline_metrics)
+            ]
             blocks.append(
                 {
                     "target_round_start": target_rounds[start],
                     "target_round_end": target_rounds[end - 1],
                     "target_rounds": end - start,
-                    "mean_matches": statistics.fmean(candidate_values),
-                    "delta_mean_matches_vs_uniform": (
-                        statistics.fmean(candidate_values) - statistics.fmean(baseline_values)
+                    "seed_runs": seed_count,
+                    "mean_matches_mean": statistics.fmean(mean_values),
+                    "hit_3_plus_rate_mean": statistics.fmean(hit_values),
+                    "delta_mean_matches_vs_uniform_mean": statistics.fmean(mean_deltas),
+                    "delta_mean_matches_vs_uniform_p025": _percentile(mean_deltas, 0.025),
+                    "delta_mean_matches_vs_uniform_p975": _percentile(mean_deltas, 0.975),
+                    "delta_hit_3_plus_rate_vs_uniform_mean": statistics.fmean(hit_deltas),
+                    "delta_hit_3_plus_rate_vs_uniform_p025": _percentile(hit_deltas, 0.025),
+                    "delta_hit_3_plus_rate_vs_uniform_p975": _percentile(hit_deltas, 0.975),
+                    "candidate_better_seed_fraction": (
+                        sum(value > 0 for value in mean_deltas) / seed_count
                     ),
-                    "hit_3_plus_rate": statistics.fmean(value >= 3 for value in candidate_values),
+                    "candidate_equal_seed_fraction": (
+                        sum(value == 0 for value in mean_deltas) / seed_count
+                    ),
+                    "candidate_worse_seed_fraction": (
+                        sum(value < 0 for value in mean_deltas) / seed_count
+                    ),
                 }
             )
         period_results[name] = blocks
