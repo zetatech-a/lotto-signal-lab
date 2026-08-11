@@ -2,8 +2,8 @@ import math
 
 import pytest
 
-from lotto_lab.backtest import walk_forward_trace
-from lotto_lab.evaluation import compare_strategies
+from lotto_lab.backtest import BacktestObservation, walk_forward_trace
+from lotto_lab.evaluation import compare_strategies, derive_seed
 from lotto_lab.models import Draw
 from lotto_lab.statistics import random_match_probabilities
 
@@ -62,6 +62,39 @@ def test_uniform_paired_delta_is_zero() -> None:
     aggregate = result["aggregate_strategy_results"]["uniform"]
     assert aggregate["delta_mean_matches_mean"] == 0
     assert aggregate["candidate_equal_seed_fraction"] == 1
+
+
+def test_candidate_deltas_pair_corresponding_seed_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    base_seed = 73
+    run_seeds = [derive_seed(base_seed, index) for index in range(3)]
+    matches_by_strategy_and_seed = {
+        "uniform": dict(zip(run_seeds, (0, 1, 3))),
+        "hot": dict(zip(run_seeds, (0, 0, 3))),
+    }
+
+    def fake_trace(
+        draws: list[Draw], strategy: object, *, min_history: int, seed: int
+    ) -> tuple[BacktestObservation, ...]:
+        del draws, min_history
+        strategy_name = getattr(strategy, "name")
+        matches = matches_by_strategy_and_seed[strategy_name][seed]
+        return (BacktestObservation(round=21, matches=matches),)
+
+    monkeypatch.setattr("lotto_lab.evaluation.walk_forward_trace", fake_trace)
+    result = compare_strategies(
+        make_draws(),
+        strategies=("uniform", "hot"),
+        seed_count=3,
+        base_seed=base_seed,
+        min_history=20,
+    )
+
+    aggregate = result["aggregate_strategy_results"]["hot"]
+    # Corresponding seed deltas are (0, -1, 0). Reordering the uniform runs,
+    # such as reversing them, changes both this percentile and these fractions.
+    assert aggregate["delta_mean_matches_p025"] == pytest.approx(-0.95)
+    assert aggregate["candidate_equal_seed_fraction"] == pytest.approx(2 / 3)
+    assert aggregate["candidate_worse_seed_fraction"] == pytest.approx(1 / 3)
 
 
 def test_periods_cover_targets_once_and_include_final_short_block() -> None:
