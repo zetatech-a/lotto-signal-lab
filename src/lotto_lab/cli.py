@@ -36,6 +36,14 @@ def command_import_csv(args: argparse.Namespace) -> None:
     print(json.dumps({"imported": len(draws), "stored": repository.count()}, ensure_ascii=False))
 
 
+def command_validate(args: argparse.Namespace) -> None:
+    repository = _repository(args.db)
+    with DhlotteryCollector(delay_seconds=0) as collector:
+        official_latest = collector.latest_round()
+    result = repository.validate_integrity(official_latest)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
 def command_stats(args: argparse.Namespace) -> None:
     draws = _repository(args.db).list_draws()
     if not draws:
@@ -127,6 +135,12 @@ def build_parser() -> argparse.ArgumentParser:
     import_csv.add_argument("path")
     import_csv.add_argument("--db", default=str(DEFAULT_DB))
     import_csv.set_defaults(func=command_import_csv)
+
+    validate = subparsers.add_parser(
+        "validate", help="validate stored draws against the official latest round"
+    )
+    validate.add_argument("--db", default=str(DEFAULT_DB))
+    validate.set_defaults(func=command_validate)
 
     stats = subparsers.add_parser("stats", help="show frequency statistics")
     stats.add_argument("--db", default=str(DEFAULT_DB))
