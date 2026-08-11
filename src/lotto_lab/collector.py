@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import re
 import time
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Self
 
@@ -13,11 +13,14 @@ from bs4 import BeautifulSoup
 from .models import Draw
 from .storage import DrawRepository
 
-WIN_NUMBER_PAGE_URL = "https://www.dhlottery.co.kr/lt645/winNumber"
-
-# Compatibility endpoint used by older versions of the official site. Its continued
-# availability is not assumed; unexpected responses fail loudly.
-LEGACY_JSON_URL = "https://www.dhlottery.co.kr/common.do"
+RESULT_PAGE_URL = "https://www.dhlottery.co.kr/lt645/result"
+DRAW_JSON_URL = "https://www.dhlottery.co.kr/lt645/selectPstLt645InfoNew.do"
+DRAW_JSON_HEADERS = {
+    "Accept": "application/json, text/javascript, */*; q=0.01",
+    "Ajax": "true",
+    "X-Requested-With": "XMLHttpRequest",
+    "Referer": RESULT_PAGE_URL,
+}
 
 ROUND_PATTERN = re.compile(r"^\s*(\d+)\s*회\s*$")
 
@@ -45,25 +48,57 @@ def parse_latest_round(html: str) -> int:
     return max(rounds)
 
 
-def parse_legacy_payload(payload: dict[str, object]) -> Draw:
-    if str(payload.get("returnValue", "")).lower() != "success":
-        raise CollectorError(f"official compatibility endpoint returned failure: {payload!r}")
+def parse_draw_payload(payload: object, requested_round: int) -> Draw:
+    """Parse the official site's current internal JSON response for one round."""
+    if not isinstance(payload, dict):
+        raise CollectorError("official draw response must be a JSON object")
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        raise CollectorError("official draw response data must be an object")
+    rows = data.get("list")
+    if not isinstance(rows, list):
+        raise CollectorError("official draw response data.list must be a list")
+
+    row = next(
+        (
+            item
+            for item in rows
+            if isinstance(item, dict)
+            and type(item.get("ltEpsd")) is int
+            and item["ltEpsd"] == requested_round
+        ),
+        None,
+    )
+    if row is None:
+        raise CollectorError(f"requested round {requested_round} is missing from data.list")
+
+    raw_numbers = [row.get(f"tm{i}WnNo") for i in range(1, 7)]
+    bonus = row.get("bnsWnNo")
+    if any(type(number) is not int for number in raw_numbers):
+        raise CollectorError("six integer winning numbers are required")
+    if type(bonus) is not int:
+        raise CollectorError("bonus must be an integer")
+
+    raw_date = row.get("ltRflYmd")
+    if not isinstance(raw_date, str):
+        raise CollectorError("ltRflYmd must be a valid YYYYMMDD date")
+    try:
+        draw_date = datetime.strptime(raw_date, "%Y%m%d").date()
+        if draw_date.strftime("%Y%m%d") != raw_date:
+            raise ValueError
+    except ValueError as exc:
+        raise CollectorError("ltRflYmd must be a valid YYYYMMDD date") from exc
 
     try:
-        round_no = int(payload["drwNo"])
-        numbers = tuple(sorted(int(payload[f"drwtNo{i}"]) for i in range(1, 7)))
-        bonus = int(payload["bnusNo"])
-        raw_date = str(payload.get("drwNoDate") or "")
-        draw_date = date.fromisoformat(raw_date) if raw_date else None
-    except (KeyError, TypeError, ValueError) as exc:
-        raise CollectorError("unexpected draw payload shape") from exc
-
-    return Draw(
-        round=round_no,
-        draw_date=draw_date,
-        numbers=numbers,  # type: ignore[arg-type]
-        bonus=bonus,
-    )
+        numbers = tuple(sorted(raw_numbers))
+        return Draw(
+            round=requested_round,
+            draw_date=draw_date,
+            numbers=numbers,  # type: ignore[arg-type]
+            bonus=bonus,
+        )
+    except ValueError as exc:
+        raise CollectorError(f"invalid draw values for round {requested_round}: {exc}") from exc
 
 
 class DhlotteryCollector:
@@ -125,7 +160,7 @@ class DhlotteryCollector:
         raise CollectorError(f"request failed after retries: {url}") from last_error
 
     def latest_round(self) -> int:
-        response = self._get(WIN_NUMBER_PAGE_URL)
+        response = self._get(RESULT_PAGE_URL)
         return parse_latest_round(response.text)
 
     def fetch_draw(self, round_no: int) -> Draw:
@@ -133,26 +168,18 @@ class DhlotteryCollector:
             raise ValueError("round_no must be >= 1")
 
         response = self._get(
-            LEGACY_JSON_URL,
-            params={"method": "getLottoNumber", "drwNo": round_no},
+            DRAW_JSON_URL,
+            params={"srchDir": "center", "srchLtEpsd": round_no},
+            headers=DRAW_JSON_HEADERS,
         )
 
         try:
             payload = response.json()
         except ValueError as exc:
             raise CollectorError(
-                "the official compatibility JSON endpoint is unavailable or changed; "
-                "the current official per-round contract requires live verification"
+                "the official draw endpoint returned invalid JSON"
             ) from exc
-
-        if not isinstance(payload, dict):
-            raise CollectorError("unexpected JSON response type")
-        draw = parse_legacy_payload(payload)
-        if draw.round != round_no:
-            raise CollectorError(
-                f"official endpoint returned round {draw.round} for requested round {round_no}"
-            )
-        return draw
+        return parse_draw_payload(payload, round_no)
 
     def sync(self, repository: DrawRepository) -> tuple[int, int]:
         repository.initialize()

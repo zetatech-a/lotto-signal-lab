@@ -1,0 +1,18 @@
+{
+  "resultCode": null,
+  "resultMessage": null,
+  "data": {
+    "list": [
+      {"ltEpsd": 1235},
+      {"ltEpsd": 1234},
+      {"ltEpsd": 1233},
+      {"ltEpsd": 1232},
+      {"ltEpsd": 1231},
+      {"ltEpsd": 1236, "tm1WnNo": 12, "tm2WnNo": 18, "tm3WnNo": 21, "tm4WnNo": 29, "tm5WnNo": 34, "tm6WnNo": 38, "bnsWnNo": 10, "ltRflYmd": "20260808"},
+      {"ltEpsd": 1230},
+      {"ltEpsd": 1229},
+      {"ltEpsd": 1228},
+      {"ltEpsd": 1227}
+    ]
+  }
+}
