@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import re
 import time
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 from typing import Self
 
@@ -80,12 +80,10 @@ def parse_draw_payload(payload: object, requested_round: int) -> Draw:
         raise CollectorError("bonus must be an integer")
 
     raw_date = row.get("ltRflYmd")
-    if not isinstance(raw_date, str):
+    if not isinstance(raw_date, str) or re.fullmatch(r"[0-9]{8}", raw_date) is None:
         raise CollectorError("ltRflYmd must be a valid YYYYMMDD date")
     try:
-        draw_date = datetime.strptime(raw_date, "%Y%m%d").date()
-        if draw_date.strftime("%Y%m%d") != raw_date:
-            raise ValueError
+        draw_date = date(int(raw_date[:4]), int(raw_date[4:6]), int(raw_date[6:]))
     except ValueError as exc:
         raise CollectorError("ltRflYmd must be a valid YYYYMMDD date") from exc
 
