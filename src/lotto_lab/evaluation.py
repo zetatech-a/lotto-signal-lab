@@ -126,7 +126,10 @@ def compare_strategies(
         mean_values = [run.mean_matches for run in runs]
         hit_values = [run.hit_3_plus_rate for run in runs]
         mean_deltas = [run.mean_matches - base.mean_matches for run, base in zip(runs, baseline)]
-        hit_deltas = [run.hit_3_plus_rate - base.hit_3_plus_rate for run, base in zip(runs, baseline)]
+        hit_deltas = [
+            run.hit_3_plus_rate - base.hit_3_plus_rate
+            for run, base in zip(runs, baseline)
+        ]
         aggregates[name] = {
             "seed_runs": seed_count,
             **_distribution(mean_values, "mean_matches"),

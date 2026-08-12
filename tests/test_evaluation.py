@@ -199,7 +199,9 @@ def test_theoretical_baselines_use_exact_probabilities() -> None:
     )
     baseline = result["theoretical_baselines"]
     assert baseline["theoretical_mean_matches"] == 0.8
-    assert math.isclose(baseline["theoretical_hit_3_plus_rate"], sum(random_match_probabilities()[3:]))
+    assert math.isclose(
+        baseline["theoretical_hit_3_plus_rate"], sum(random_match_probabilities()[3:])
+    )
 
 
 @pytest.mark.parametrize(
