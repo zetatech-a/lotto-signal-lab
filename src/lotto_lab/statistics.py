@@ -9,6 +9,14 @@ from math import comb
 
 from .models import Draw
 
+LOTTO_NUMBER_OCCURRENCE_PROBABILITY = 6 / 45
+EXPECTED_LAST_SEEN_GAP = (
+    1 - LOTTO_NUMBER_OCCURRENCE_PROBABILITY
+) / LOTTO_NUMBER_OCCURRENCE_PROBABILITY
+LAST_SEEN_GAP_STDDEV = (
+    math.sqrt(1 - LOTTO_NUMBER_OCCURRENCE_PROBABILITY) / LOTTO_NUMBER_OCCURRENCE_PROBABILITY
+)
+
 
 @dataclass(frozen=True, slots=True)
 class UniformityResult:
@@ -102,12 +110,26 @@ def pair_counts(draws: Iterable[Draw]) -> Counter[tuple[int, int]]:
 
 
 def last_seen_gaps(draws: list[Draw]) -> dict[int, int]:
+    """Return completed draws since each number appeared.
+
+    A number absent from all available draws receives ``len(draws)``. That value
+    represents a left-censored gap of at least that length; earlier history is
+    deliberately not inferred or consulted.
+    """
     gaps = {number: len(draws) for number in range(1, 46)}
     for offset, draw in enumerate(reversed(draws)):
         for number in draw.numbers:
             if gaps[number] == len(draws):
                 gaps[number] = offset
     return gaps
+
+
+def standardized_last_seen_gap_scores(draws: list[Draw]) -> dict[int, float]:
+    """Standardize last-seen gaps against the theoretical geometric null."""
+    return {
+        number: (gap - EXPECTED_LAST_SEEN_GAP) / LAST_SEEN_GAP_STDDEV
+        for number, gap in last_seen_gaps(draws).items()
+    }
 
 
 def chi_square_uniformity(draws: list[Draw]) -> float:
