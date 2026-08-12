@@ -109,17 +109,24 @@ class FrequencyStrategy:
 
         return combined
 
-    def ticket(self, history: list[Draw], *, seed: int) -> Ticket:
+    def weights(self, history: list[Draw]) -> dict[int, float]:
+        """Compute the deterministic sampling weights for a history."""
         scores = self.scores(history)
-
         weights = {}
         for number in range(1, 46):
             raw_log_weight = scores[number] * self.z_to_log_weight
             log_weight = max(-self.max_log_tilt, min(self.max_log_tilt, raw_log_weight))
             weights[number] = math.exp(log_weight)
+        return weights
+
+    def ticket_from_weights(self, weights: dict[int, float], *, seed: int) -> Ticket:
+        """Sample a ticket from precomputed weights using only the supplied seed."""
         rng = random.Random(seed)
         sampled = _weighted_sample_without_replacement(weights, count=6, rng=rng)
         return sampled  # type: ignore[return-value]
+
+    def ticket(self, history: list[Draw], *, seed: int) -> Ticket:
+        return self.ticket_from_weights(self.weights(history), seed=seed)
 
 
 def build_strategy(name: str) -> Strategy:
