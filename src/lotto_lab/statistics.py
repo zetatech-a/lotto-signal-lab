@@ -48,6 +48,35 @@ def standardized_occurrence_scores(
     }
 
 
+def standardized_frequency_drift_scores(
+    draws: list[Draw], *, recent_window: int = 50, baseline_window: int = 250
+) -> dict[int, float]:
+    """Compare occurrence rates in adjacent trailing windows on a shared scale."""
+    required_history = recent_window + baseline_window
+    if recent_window < 1 or baseline_window < 1:
+        raise ValueError("drift windows must be >= 1")
+    if len(draws) < required_history:
+        raise ValueError(f"drift requires at least {required_history} prior draws")
+
+    trailing = draws[-required_history:]
+    baseline_counts = number_counts(trailing[:baseline_window])
+    recent_counts = number_counts(trailing[baseline_window:])
+    probability = 6 / 45
+    standard_error = math.sqrt(
+        probability
+        * (1 - probability)
+        * (1 / recent_window + 1 / baseline_window)
+    )
+    return {
+        number: (
+            recent_counts[number] / recent_window
+            - baseline_counts[number] / baseline_window
+        )
+        / standard_error
+        for number in range(1, 46)
+    }
+
+
 def frequency_table(draws: list[Draw], window: int | None = None) -> list[tuple[int, int, float]]:
     if window is not None:
         if window < 1:

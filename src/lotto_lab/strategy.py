@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import ClassVar, Protocol
 
 from .models import Draw
-from .statistics import standardized_occurrence_scores
+from .statistics import standardized_frequency_drift_scores, standardized_occurrence_scores
 
 Ticket = tuple[int, int, int, int, int, int]
 
@@ -125,9 +125,11 @@ class FrequencyDriftStrategy(FrequencyStrategy):
         if len(history) < self.long_window:
             raise ValueError("drift requires at least 300 prior draws")
 
-        recent = self._z_scores(history, self.recent_window)
-        long = self._z_scores(history, self.long_window)
-        return {number: recent[number] - long[number] for number in range(1, 46)}
+        return standardized_frequency_drift_scores(
+            history,
+            recent_window=self.recent_window,
+            baseline_window=self.long_window - self.recent_window,
+        )
 
 
 def build_strategy(name: str) -> Strategy:

@@ -16,6 +16,11 @@ from .strategy import build_strategy
 DEFAULT_DB = Path("data/lotto.db")
 
 
+def _validate_drift_min_history(strategies: list[str], min_history: int) -> None:
+    if "drift" in strategies and min_history < 300:
+        raise SystemExit("drift requires --min-history >= 300")
+
+
 def _repository(path: str) -> DrawRepository:
     repository = DrawRepository(path)
     repository.initialize()
@@ -69,6 +74,7 @@ def command_stats(args: argparse.Namespace) -> None:
 
 
 def command_backtest(args: argparse.Namespace) -> None:
+    _validate_drift_min_history([args.strategy], args.min_history)
     draws = _repository(args.db).list_draws()
     strategy = build_strategy(args.strategy)
     result = walk_forward_backtest(
@@ -82,6 +88,7 @@ def command_backtest(args: argparse.Namespace) -> None:
 
 
 def command_compare(args: argparse.Namespace) -> None:
+    _validate_drift_min_history(args.strategies, args.min_history)
     draws = _repository(args.db).list_draws()
     result = compare_strategies(
         draws,

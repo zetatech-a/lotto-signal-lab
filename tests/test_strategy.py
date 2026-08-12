@@ -68,21 +68,24 @@ def test_drift_score_sign_matches_controlled_frequency_change() -> None:
     assert scores[2] < 0
 
 
-def test_drift_uses_exact_trailing_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_drift_requests_exact_recent_and_baseline_windows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     history = make_history(301)
-    calls: list[tuple[tuple[int, ...], int]] = []
+    calls: list[tuple[tuple[int, ...], int, int]] = []
 
-    def recording_scores(draws: list[Draw], window: int) -> dict[int, float]:
-        calls.append((tuple(draw.round for draw in draws[-window:]), window))
+    def recording_scores(
+        draws: list[Draw], *, recent_window: int, baseline_window: int
+    ) -> dict[int, float]:
+        calls.append((tuple(draw.round for draw in draws), recent_window, baseline_window))
         return {number: 0.0 for number in range(1, 46)}
 
-    monkeypatch.setattr("lotto_lab.strategy.standardized_occurrence_scores", recording_scores)
+    monkeypatch.setattr(
+        "lotto_lab.strategy.standardized_frequency_drift_scores", recording_scores
+    )
     FrequencyDriftStrategy().scores(history)
 
-    assert calls == [
-        (tuple(range(252, 302)), 50),
-        (tuple(range(2, 302)), 300),
-    ]
+    assert calls == [(tuple(range(1, 302)), 50, 250)]
 
 
 def test_drift_ignores_draws_older_than_long_window() -> None:

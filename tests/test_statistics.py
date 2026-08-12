@@ -1,7 +1,11 @@
 import pytest
 
 from lotto_lab.models import Draw
-from lotto_lab.statistics import number_counts, random_match_probabilities
+from lotto_lab.statistics import (
+    number_counts,
+    random_match_probabilities,
+    standardized_frequency_drift_scores,
+)
 
 
 def test_number_counts() -> None:
@@ -20,3 +24,40 @@ def test_random_match_probabilities_sum_to_one() -> None:
     assert sum(
         index * probability for index, probability in enumerate(probabilities)
     ) == pytest.approx(0.8)
+
+
+def make_partitioned_drift_history() -> list[Draw]:
+    draws = []
+    for index in range(300):
+        numbers = [5, 6, 7, 8, 9, 10]
+        if index < 250:
+            numbers[0] = 4
+            if index < 50:
+                numbers[1] = 1
+        else:
+            numbers[0] = 3
+            if index < 260:
+                numbers[1] = 1
+        draws.append(Draw(index + 1, tuple(sorted(numbers)), 45))
+    return draws
+
+
+def test_frequency_drift_uses_non_overlapping_50_and_250_windows() -> None:
+    scores = standardized_frequency_drift_scores(make_partitioned_drift_history())
+    assert scores[1] == pytest.approx(0.0)  # 10/50 == 50/250
+    assert scores[2] == 0.0  # absent from both windows
+    assert scores[3] > 0.0
+    assert scores[4] < 0.0
+
+
+def test_frequency_drift_ignores_history_before_trailing_300() -> None:
+    history = make_partitioned_drift_history()
+    older = [Draw(1, (1, 2, 3, 4, 11, 12), 45)]
+    assert standardized_frequency_drift_scores(older + history) == (
+        standardized_frequency_drift_scores(history)
+    )
+
+
+def test_frequency_drift_requires_complete_partition() -> None:
+    with pytest.raises(ValueError, match="at least 300 prior draws"):
+        standardized_frequency_drift_scores(make_partitioned_drift_history()[:-1])
