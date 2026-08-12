@@ -3,9 +3,10 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass
-from typing import Protocol
+from typing import ClassVar, Protocol
 
 from .models import Draw
+from .statistics import standardized_frequency_drift_scores, standardized_occurrence_scores
 
 Ticket = tuple[int, int, int, int, int, int]
 
@@ -66,24 +67,7 @@ class FrequencyStrategy:
             raise ValueError("max_log_tilt must be >= 0")
 
     def _z_scores(self, history: list[Draw], window: int) -> dict[int, float]:
-        subset = history[-window:]
-        n = len(subset)
-        if n == 0:
-            return {number: 0.0 for number in range(1, 46)}
-
-        counts = {number: 0 for number in range(1, 46)}
-        for draw in subset:
-            for number in draw.numbers:
-                counts[number] += 1
-
-        p = 6 / 45
-        expected = n * p
-        variance = n * p * (1 - p)
-        stddev = math.sqrt(variance) if variance > 0 else 1.0
-        return {
-            number: (counts[number] - expected) / stddev
-            for number in range(1, 46)
-        }
+        return standardized_occurrence_scores(history, window)
 
     def scores(self, history: list[Draw]) -> dict[int, float]:
         if len(history) < 20:
@@ -129,9 +113,30 @@ class FrequencyStrategy:
         return self.ticket_from_weights(self.weights(history), seed=seed)
 
 
+@dataclass(frozen=True, slots=True)
+class FrequencyDriftStrategy(FrequencyStrategy):
+    """Experiment using recent frequency deviation relative to a long baseline."""
+
+    recent_window: ClassVar[int] = 50
+    long_window: ClassVar[int] = 300
+    name: str = "drift"
+
+    def scores(self, history: list[Draw]) -> dict[int, float]:
+        if len(history) < self.long_window:
+            raise ValueError("drift requires at least 300 prior draws")
+
+        return standardized_frequency_drift_scores(
+            history,
+            recent_window=self.recent_window,
+            baseline_window=self.long_window - self.recent_window,
+        )
+
+
 def build_strategy(name: str) -> Strategy:
     if name == "uniform":
         return UniformRandomStrategy()
     if name in {"hot", "cold", "hybrid"}:
         return FrequencyStrategy(mode=name, name=name)
+    if name == "drift":
+        return FrequencyDriftStrategy()
     raise ValueError(f"unknown strategy: {name}")

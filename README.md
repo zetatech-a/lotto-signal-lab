@@ -95,6 +95,7 @@ lotto-lab backtest --strategy uniform
 lotto-lab backtest --strategy hot
 lotto-lab backtest --strategy cold
 lotto-lab backtest --strategy hybrid
+lotto-lab backtest --strategy drift --min-history 300
 ```
 
 중요 출력:
@@ -121,6 +122,19 @@ lotto-lab compare --seeds 100 --period-size 200
 성과의 95% 신뢰구간이 아니며 통계적 유의성을 뜻하지도 않습니다. 기간 블록은 시간에 따른
 안정성을 확인하는 평가 구간일 뿐입니다. 각 목표 회차의 학습 이력은 블록 경계에서 초기화하지
 않고 언제나 그 회차 전까지의 모든 추첨을 사용합니다.
+
+실험 전략 `drift`는 trailing 300회를 겹치지 않는 최근 50회와 그 직전 250회로 나누고, 번호별
+출현율 차이를 공통 표준오차로 표준화한 값을 보수적인 확률 가중치로 변환합니다. 최소 300회의
+이전 이력이 필요하며 자동 추천 전략 선택에는 포함되지 않습니다. 다중 seed 비교는 다음과 같이
+실행합니다.
+
+```bash
+lotto-lab compare \
+  --strategies uniform drift \
+  --seeds 100 \
+  --min-history 300 \
+  --period-size 200
+```
 
 ### 6. 추천 번호 생성
 

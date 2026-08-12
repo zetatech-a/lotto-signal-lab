@@ -6,7 +6,7 @@ from lotto_lab.backtest import BacktestObservation, walk_forward_trace
 from lotto_lab.evaluation import compare_strategies, derive_seed
 from lotto_lab.models import Draw
 from lotto_lab.statistics import random_match_probabilities
-from lotto_lab.strategy import FrequencyStrategy
+from lotto_lab.strategy import FrequencyDriftStrategy, FrequencyStrategy
 
 
 def make_draws(rounds: int = 31) -> list[Draw]:
@@ -48,6 +48,30 @@ def test_comparison_is_deterministic_and_has_correct_seed_count() -> None:
         result["seed_runs"] == 4
         for result in first["aggregate_strategy_results"].values()
     )
+
+
+def test_multi_seed_comparison_evaluates_active_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    history_lengths: list[int] = []
+    original_scores = FrequencyDriftStrategy.scores
+
+    def recording_scores(
+        self: FrequencyDriftStrategy, history: list[Draw]
+    ) -> dict[int, float]:
+        history_lengths.append(len(history))
+        return original_scores(self, history)
+
+    monkeypatch.setattr(FrequencyDriftStrategy, "scores", recording_scores)
+    result = compare_strategies(
+        make_draws(301),
+        strategies=("uniform", "drift"),
+        seed_count=3,
+        min_history=300,
+    )
+    assert result["strategies"] == ["uniform", "drift"]
+    assert result["aggregate_strategy_results"]["drift"]["seed_runs"] == 3
+    assert history_lengths == [300]
 
 
 def test_different_base_seed_changes_stochastic_results() -> None:
