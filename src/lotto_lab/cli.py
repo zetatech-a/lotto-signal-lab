@@ -174,7 +174,7 @@ def build_parser() -> argparse.ArgumentParser:
     backtest.add_argument("--db", default=str(DEFAULT_DB))
     backtest.add_argument(
         "--strategy",
-        choices=["uniform", "hot", "cold", "hybrid", "drift"],
+        choices=["uniform", "hot", "cold", "hybrid", "drift", "gap-overdue", "gap-recent"],
         default="hybrid",
     )
     backtest.add_argument("--min-history", type=int, default=200)
@@ -189,7 +189,7 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument(
         "--strategies",
         nargs="+",
-        choices=["uniform", "hot", "cold", "hybrid", "drift"],
+        choices=["uniform", "hot", "cold", "hybrid", "drift", "gap-overdue", "gap-recent"],
         default=["uniform", "hot", "cold", "hybrid"],
     )
     compare.add_argument("--seeds", type=int, default=100)

@@ -6,7 +6,11 @@ from dataclasses import dataclass
 from typing import ClassVar, Protocol
 
 from .models import Draw
-from .statistics import standardized_frequency_drift_scores, standardized_occurrence_scores
+from .statistics import (
+    standardized_frequency_drift_scores,
+    standardized_last_seen_gap_scores,
+    standardized_occurrence_scores,
+)
 
 Ticket = tuple[int, int, int, int, int, int]
 
@@ -132,6 +136,28 @@ class FrequencyDriftStrategy(FrequencyStrategy):
         )
 
 
+@dataclass(frozen=True, slots=True)
+class GapStrategy(FrequencyStrategy):
+    """Experiment testing last-seen gap against the independent-draw null."""
+
+    mode: str = "overdue"
+    name: str = "gap-overdue"
+
+    def __post_init__(self) -> None:
+        if self.mode not in {"overdue", "recent"}:
+            raise ValueError("mode must be one of: overdue, recent")
+        if self.z_to_log_weight < 0:
+            raise ValueError("z_to_log_weight must be >= 0")
+        if self.max_log_tilt < 0:
+            raise ValueError("max_log_tilt must be >= 0")
+
+    def scores(self, history: list[Draw]) -> dict[int, float]:
+        scores = standardized_last_seen_gap_scores(history)
+        if self.mode == "recent":
+            return {number: -score for number, score in scores.items()}
+        return scores
+
+
 def build_strategy(name: str) -> Strategy:
     if name == "uniform":
         return UniformRandomStrategy()
@@ -139,4 +165,7 @@ def build_strategy(name: str) -> Strategy:
         return FrequencyStrategy(mode=name, name=name)
     if name == "drift":
         return FrequencyDriftStrategy()
+    if name in {"gap-overdue", "gap-recent"}:
+        mode = name.removeprefix("gap-")
+        return GapStrategy(mode=mode, name=name)
     raise ValueError(f"unknown strategy: {name}")

@@ -136,6 +136,24 @@ lotto-lab compare \
   --period-size 200
 ```
 
+`gap-overdue`와 `gap-recent`는 번호가 마지막으로 나온 뒤 완료된 추첨 횟수(gap)에 예측 정보가
+있는지 검정하는 경쟁적 **실험 전략**입니다. 직전 회차에 나온 번호의 gap은 0이며, 사용 가능한
+이력에서 한 번도 나오지 않은 번호는 `len(history)`로 처리합니다. 이는 실제 gap이 그 이상일 수
+있는 left-censored, 즉 "적어도 이만큼 오래됨"을 뜻하며 가용 이력 이전을 조회하지 않습니다.
+
+`overdue`는 어떤 번호가 수학적으로 당첨될 때가 되었다는 뜻이 아닙니다. 독립 추첨이라는 귀무
+가설 아래에서는 과거의 부재가 다음 회차의 이론적 출현 확률을 높이지 않습니다. 두 전략은 이
+귀무 기대에서 벗어나는 편차가 역사 데이터에 있는지를 엄격한 walk-forward 방식으로 경험적으로
+검정할 뿐이며, 자동 추천이나 추천 CLI 선택지에는 포함되지 않습니다.
+
+```bash
+lotto-lab compare \
+  --strategies uniform gap-overdue gap-recent \
+  --seeds 100 \
+  --min-history 200 \
+  --period-size 200
+```
+
 ### 6. 추천 번호 생성
 
 ```bash

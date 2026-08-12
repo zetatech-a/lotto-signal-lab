@@ -74,6 +74,20 @@ def test_multi_seed_comparison_evaluates_active_drift(
     assert history_lengths == [300]
 
 
+def test_multi_seed_comparison_supports_both_gap_hypotheses() -> None:
+    result = compare_strategies(
+        make_draws(),
+        strategies=("uniform", "gap-overdue", "gap-recent"),
+        seed_count=3,
+        min_history=20,
+    )
+    assert result["strategies"] == ["uniform", "gap-overdue", "gap-recent"]
+    assert all(
+        result["aggregate_strategy_results"][name]["seed_runs"] == 3
+        for name in result["strategies"]
+    )
+
+
 def test_different_base_seed_changes_stochastic_results() -> None:
     first = compare_strategies(make_draws(45), seed_count=3, base_seed=1, min_history=20)
     second = compare_strategies(make_draws(45), seed_count=3, base_seed=2, min_history=20)

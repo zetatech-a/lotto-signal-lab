@@ -30,3 +30,14 @@ def test_drift_cli_rejects_insufficient_min_history_before_database_access(
         args.func(args)
 
     repository.assert_not_called()
+
+
+@pytest.mark.parametrize("command", ["backtest", "compare"])
+def test_gap_strategies_are_cli_choices(command: str) -> None:
+    parser = build_parser()
+    if command == "backtest":
+        assert parser.parse_args([command, "--strategy", "gap-overdue"]).strategy == "gap-overdue"
+    else:
+        assert parser.parse_args(
+            [command, "--strategies", "uniform", "gap-overdue", "gap-recent"]
+        ).strategies == ["uniform", "gap-overdue", "gap-recent"]

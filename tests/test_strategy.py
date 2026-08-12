@@ -5,6 +5,7 @@ from lotto_lab.models import Draw
 from lotto_lab.strategy import (
     FrequencyDriftStrategy,
     FrequencyStrategy,
+    GapStrategy,
     UniformRandomStrategy,
     build_strategy,
 )
@@ -132,3 +133,32 @@ def test_drift_ticket_is_reproducible_stochastic_and_valid() -> None:
     assert len(ticket) == len(set(ticket)) == 6
     assert all(1 <= number <= 45 for number in ticket)
     assert build_strategy("drift").name == "drift"
+
+
+def test_gap_strategy_score_directions_and_no_target_leakage() -> None:
+    history = [
+        Draw(1, (1, 2, 3, 4, 5, 6), 45),
+        Draw(2, (2, 7, 8, 9, 10, 11), 45),
+        Draw(3, (3, 12, 13, 14, 15, 16), 45),
+    ]
+    target = Draw(4, (1, 17, 18, 19, 20, 21), 45)
+    overdue = GapStrategy(mode="overdue")
+    recent = GapStrategy(mode="recent", name="gap-recent")
+
+    scores_before_target = overdue.scores(history)
+    assert scores_before_target[1] > scores_before_target[3]
+    assert recent.scores(history)[3] > recent.scores(history)[1]
+    assert overdue.scores(history) == scores_before_target
+    assert overdue.scores(history + [target])[1] != scores_before_target[1]
+
+
+@pytest.mark.parametrize("name", ["gap-overdue", "gap-recent"])
+def test_gap_ticket_is_reproducible_stochastic_and_valid(name: str) -> None:
+    strategy = build_strategy(name)
+    history = make_history()
+    ticket = strategy.ticket(history, seed=123)
+    assert ticket == strategy.ticket(history, seed=123)
+    assert ticket != strategy.ticket(history, seed=124)
+    assert len(ticket) == len(set(ticket)) == 6
+    assert all(1 <= number <= 45 for number in ticket)
+    assert strategy.name == name

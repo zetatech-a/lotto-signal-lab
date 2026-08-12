@@ -33,7 +33,8 @@ def test_auto_selection_returns_a_valid_strategy() -> None:
     assert len(ticket) == 6
 
 
-def test_drift_is_not_a_recommendation_cli_choice() -> None:
+@pytest.mark.parametrize("strategy", ["drift", "gap-overdue", "gap-recent"])
+def test_experimental_strategy_is_not_a_recommendation_cli_choice(strategy: str) -> None:
     parser = build_parser()
     with pytest.raises(SystemExit):
-        parser.parse_args(["recommend", "--strategy", "drift"])
+        parser.parse_args(["recommend", "--strategy", strategy])
