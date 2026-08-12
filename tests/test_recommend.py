@@ -1,3 +1,6 @@
+import pytest
+
+from lotto_lab.cli import build_parser
 from lotto_lab.models import Draw
 from lotto_lab.recommend import recommend, select_strategy
 from lotto_lab.strategy import UniformRandomStrategy
@@ -28,3 +31,9 @@ def test_auto_selection_returns_a_valid_strategy() -> None:
     )
     ticket = selection.strategy.ticket(make_draws(), seed=1)
     assert len(ticket) == 6
+
+
+def test_drift_is_not_a_recommendation_cli_choice() -> None:
+    parser = build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["recommend", "--strategy", "drift"])

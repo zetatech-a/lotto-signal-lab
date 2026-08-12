@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import random
 from collections import Counter
 from collections.abc import Iterable
@@ -24,6 +25,27 @@ def number_counts(draws: Iterable[Draw]) -> Counter[int]:
     for number in range(1, 46):
         counts.setdefault(number, 0)
     return counts
+
+
+def standardized_occurrence_scores(
+    draws: list[Draw], window: int
+) -> dict[int, float]:
+    """Return binomial z-scores from at most the trailing ``window`` draws."""
+    if window < 1:
+        raise ValueError("window must be >= 1")
+
+    subset = draws[-window:]
+    if not subset:
+        return {number: 0.0 for number in range(1, 46)}
+
+    counts = number_counts(subset)
+    probability = 6 / 45
+    expected = len(subset) * probability
+    stddev = math.sqrt(len(subset) * probability * (1 - probability))
+    return {
+        number: (counts[number] - expected) / stddev
+        for number in range(1, 46)
+    }
 
 
 def frequency_table(draws: list[Draw], window: int | None = None) -> list[tuple[int, int, float]]:
