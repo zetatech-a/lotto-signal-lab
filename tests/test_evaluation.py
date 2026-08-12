@@ -40,7 +40,7 @@ def test_trace_is_strict_walk_forward_and_never_resets_history() -> None:
 
 
 def test_comparison_is_deterministic_and_has_correct_seed_count() -> None:
-    kwargs = dict(seed_count=4, base_seed=88, min_history=20, period_size=4)
+    kwargs = {"seed_count": 4, "base_seed": 88, "min_history": 20, "period_size": 4}
     first = compare_strategies(make_draws(), **kwargs)
     second = compare_strategies(make_draws(), **kwargs)
     assert first == second
@@ -110,7 +110,7 @@ def test_candidate_deltas_pair_corresponding_seed_runs(monkeypatch: pytest.Monke
         draws: list[Draw], strategy: object, *, min_history: int, seed: int
     ) -> tuple[BacktestObservation, ...]:
         del draws, min_history
-        strategy_name = getattr(strategy, "name")
+        strategy_name = strategy.name
         matches = matches_by_strategy_and_seed[strategy_name][seed]
         return (BacktestObservation(round=21, matches=matches),)
 
@@ -147,7 +147,7 @@ def test_period_deltas_pair_corresponding_seed_runs(monkeypatch: pytest.MonkeyPa
         draws: list[Draw], strategy: object, *, min_history: int, seed: int
     ) -> tuple[BacktestObservation, ...]:
         del draws, min_history
-        values = matches[getattr(strategy, "name")][seed]
+        values = matches[strategy.name][seed]
         return tuple(
             BacktestObservation(round=round_no, matches=value)
             for round_no, value in zip((21, 22), values)
