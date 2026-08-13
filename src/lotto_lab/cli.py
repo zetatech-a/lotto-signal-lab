@@ -8,6 +8,7 @@ from pathlib import Path
 from .backtest import walk_forward_backtest
 from .collector import DhlotteryCollector, read_draws_csv
 from .evaluation import compare_strategies
+from .holdout import evaluate_holdout, holdout_status, load_experiment_spec
 from .recommend import recommend, select_strategy
 from .statistics import frequency_table, monte_carlo_uniformity_test
 from .storage import DrawRepository
@@ -101,6 +102,24 @@ def command_compare(args: argparse.Namespace) -> None:
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
 
 
+def command_holdout_status(args: argparse.Namespace) -> None:
+    try:
+        spec = load_experiment_spec(args.spec)
+        result = holdout_status(_repository(args.db).list_rounds(), spec)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
+    print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+
+
+def command_holdout_evaluate(args: argparse.Namespace) -> None:
+    try:
+        spec = load_experiment_spec(args.spec)
+        result = evaluate_holdout(_repository(args.db).list_draws(), spec)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
+    print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+
+
 def command_recommend(args: argparse.Namespace) -> None:
     draws = _repository(args.db).list_draws()
     if not draws:
@@ -134,10 +153,7 @@ def command_recommend(args: argparse.Namespace) -> None:
             "Past draw statistics do not guarantee a higher future win probability. "
             "Treat these as reproducible statistical experiments, not predictions."
         ),
-        "tickets": [
-            {"numbers": item.ticket, "seed": item.seed}
-            for item in items
-        ],
+        "tickets": [{"numbers": item.ticket, "seed": item.seed} for item in items],
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
@@ -197,6 +213,20 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("--min-history", type=int, default=200)
     compare.add_argument("--period-size", type=int, default=200)
     compare.set_defaults(func=command_compare)
+
+    holdout_status_parser = subparsers.add_parser(
+        "holdout-status", help="report prospective holdout readiness without performance metrics"
+    )
+    holdout_status_parser.add_argument("--spec", required=True)
+    holdout_status_parser.add_argument("--db", default=str(DEFAULT_DB))
+    holdout_status_parser.set_defaults(func=command_holdout_status)
+
+    holdout_evaluate_parser = subparsers.add_parser(
+        "holdout-evaluate", help="evaluate a ready pre-registered prospective holdout"
+    )
+    holdout_evaluate_parser.add_argument("--spec", required=True)
+    holdout_evaluate_parser.add_argument("--db", default=str(DEFAULT_DB))
+    holdout_evaluate_parser.set_defaults(func=command_holdout_evaluate)
 
     recommendation = subparsers.add_parser("recommend", help="generate reproducible tickets")
     recommendation.add_argument("--db", default=str(DEFAULT_DB))

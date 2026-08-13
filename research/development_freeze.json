@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "development_end_round": 1236,
+  "prospective_holdout_start_round": 1237,
+  "reason": "Rounds through 1236 were already used for exploratory strategy evaluation."
+}

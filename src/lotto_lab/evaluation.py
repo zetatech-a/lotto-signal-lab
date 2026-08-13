@@ -88,6 +88,7 @@ def compare_strategies(
     base_seed: int = 20260811,
     min_history: int = 200,
     period_size: int = 200,
+    target_start_round: int | None = None,
 ) -> dict[str, object]:
     if seed_count <= 0:
         raise ValueError("seed_count must be > 0")
@@ -100,23 +101,27 @@ def compare_strategies(
     if len(draws) <= min_history:
         raise ValueError("not enough draws for the requested min_history")
 
-    traces: dict[str, list[tuple[BacktestObservation, ...]]] = {
-        name: [] for name in strategies
-    }
+    traces: dict[str, list[tuple[BacktestObservation, ...]]] = {name: [] for name in strategies}
     run_seeds = [derive_seed(base_seed, seed_index) for seed_index in range(seed_count)]
     for name in strategies:
         strategy = build_strategy(name)
         if isinstance(strategy, FrequencyStrategy):
-            traces[name] = _frequency_traces(
-                draws, strategy, run_seeds, min_history=min_history
-            )
+            traces[name] = _frequency_traces(draws, strategy, run_seeds, min_history=min_history)
         else:
             for run_seed in run_seeds:
                 traces[name].append(
-                    walk_forward_trace(
-                        draws, strategy, min_history=min_history, seed=run_seed
-                    )
+                    walk_forward_trace(draws, strategy, min_history=min_history, seed=run_seed)
                 )
+
+    if target_start_round is not None:
+        traces = {
+            name: [
+                tuple(item for item in trace if item.round >= target_start_round) for trace in runs
+            ]
+            for name, runs in traces.items()
+        }
+        if not traces["uniform"][0]:
+            raise ValueError("no target draws in the requested evaluation range")
 
     metrics = {name: [_metrics(trace) for trace in runs] for name, runs in traces.items()}
     baseline = metrics["uniform"]
@@ -127,8 +132,7 @@ def compare_strategies(
         hit_values = [run.hit_3_plus_rate for run in runs]
         mean_deltas = [run.mean_matches - base.mean_matches for run, base in zip(runs, baseline)]
         hit_deltas = [
-            run.hit_3_plus_rate - base.hit_3_plus_rate
-            for run, base in zip(runs, baseline)
+            run.hit_3_plus_rate - base.hit_3_plus_rate for run, base in zip(runs, baseline)
         ]
         aggregates[name] = {
             "seed_runs": seed_count,
