@@ -39,6 +39,9 @@ class ExperimentSpec:
     hypothesis: str
     decision_rule: str
 
+    def __post_init__(self) -> None:
+        self.validate()
+
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> ExperimentSpec:
         fields = tuple(cls.__dataclass_fields__)
@@ -55,9 +58,7 @@ class ExperimentSpec:
         ):
             raise ValueError("strategies must be a JSON array of strategy names")
         values["strategies"] = tuple(strategies)
-        spec = cls(**values)
-        spec.validate()
-        return spec
+        return cls(**values)
 
     def validate(self) -> None:
         integer_fields = (
@@ -129,6 +130,7 @@ class ExperimentSpec:
             raise ValueError(f"unsupported primary_metric: {self.primary_metric}")
 
     def fingerprint(self) -> str:
+        self.validate()
         payload = asdict(self)
         payload["strategies"] = list(self.strategies)
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
@@ -170,6 +172,7 @@ def holdout_availability(rounds: list[int], spec: ExperimentSpec) -> tuple[int |
 
 
 def holdout_status(rounds: list[int], spec: ExperimentSpec) -> dict[str, object]:
+    spec.validate()
     latest, available = holdout_availability(rounds, spec)
     holdout_end_round = spec.holdout_start_round + spec.min_holdout_rounds - 1
     return {
@@ -186,6 +189,7 @@ def holdout_status(rounds: list[int], spec: ExperimentSpec) -> dict[str, object]
 
 
 def evaluate_holdout(draws: list[Draw], spec: ExperimentSpec) -> dict[str, object]:
+    spec.validate()
     _, available = holdout_availability([draw.round for draw in draws], spec)
     if available < spec.min_holdout_rounds:
         raise ValueError(

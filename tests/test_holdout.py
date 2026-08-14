@@ -47,6 +47,12 @@ def spec_payload(**changes: object) -> dict[str, object]:
     return payload
 
 
+def directly_construct_spec(**changes: object) -> ExperimentSpec:
+    payload = spec_payload(**changes)
+    payload["strategies"] = tuple(payload["strategies"])
+    return ExperimentSpec(**payload)
+
+
 def write_spec(path: Path, **changes: object) -> ExperimentSpec:
     path.write_text(json.dumps(spec_payload(**changes)), encoding="utf-8")
     return load_experiment_spec(path)
@@ -82,6 +88,22 @@ def test_valid_spec_loads_and_fingerprint_is_canonical(tmp_path: Path) -> None:
     assert first.fingerprint() == second.fingerprint()
     changed = ExperimentSpec.from_dict(spec_payload(base_seed=43))
     assert changed.fingerprint() != first.fingerprint()
+
+
+def test_direct_construction_validates_immediately() -> None:
+    assert directly_construct_spec().experiment_id == "prospective-001"
+    with pytest.raises(ValueError, match="min_holdout_rounds must be >= 50"):
+        directly_construct_spec(min_holdout_rounds=49)
+
+
+def test_replace_cannot_bypass_experiment_validation() -> None:
+    spec = directly_construct_spec()
+    with pytest.raises(ValueError, match="min_holdout_rounds must be >= 50"):
+        replace(spec, min_holdout_rounds=49)
+    with pytest.raises(ValueError, match="holdout_start_round"):
+        replace(spec, holdout_start_round=1238)
+    with pytest.raises(ValueError, match=r"min_holdout_rounds must be >= 2 \* period_size"):
+        replace(spec, period_size=26)
 
 
 @pytest.mark.parametrize(
@@ -367,10 +389,10 @@ def test_protocol_and_manifest_are_fingerprinted_and_validated() -> None:
     changed_manifest["hot"] = changed_hot
     changed["strategy_manifest"] = changed_manifest
     first = ExperimentSpec.from_dict(original)
-    assert first.fingerprint() != replace(
-        first, strategy_manifest=changed_manifest
-    ).fingerprint()
-    assert first.fingerprint() != replace(first, evaluation_protocol_version=2).fingerprint()
+    with pytest.raises(ValueError, match="current strategy configuration"):
+        replace(first, strategy_manifest=changed_manifest)
+    with pytest.raises(ValueError, match="unsupported evaluation_protocol_version"):
+        replace(first, evaluation_protocol_version=2)
     with pytest.raises(ValueError, match="current strategy configuration"):
         ExperimentSpec.from_dict(changed)
     for manifest in (
@@ -381,6 +403,26 @@ def test_protocol_and_manifest_are_fingerprinted_and_validated() -> None:
             ExperimentSpec.from_dict({**original, "strategy_manifest": manifest})
     with pytest.raises(ValueError, match="unsupported evaluation_protocol_version"):
         ExperimentSpec.from_dict({**original, "evaluation_protocol_version": 2})
+
+
+@pytest.mark.parametrize("operation", ["fingerprint", "status", "evaluate"])
+def test_mutated_manifest_is_rejected_at_public_boundaries(
+    operation: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = ExperimentSpec.from_dict(spec_payload())
+    spec.strategy_manifest["hot"]["parameters"]["z_to_log_weight"] = 0.07
+
+    def forbidden(*args: object, **kwargs: object) -> None:
+        pytest.fail("invalid specs must be rejected before holdout processing")
+
+    monkeypatch.setattr("lotto_lab.holdout.holdout_availability", forbidden)
+    with pytest.raises(ValueError, match="current strategy configuration"):
+        if operation == "fingerprint":
+            spec.fingerprint()
+        elif operation == "status":
+            holdout_status([], spec)
+        else:
+            evaluate_holdout([], spec)
 
 
 def test_evaluation_rejects_incomplete_provenance(monkeypatch: pytest.MonkeyPatch) -> None:
