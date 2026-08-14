@@ -1,7 +1,7 @@
 import json
-from statistics import NormalDist
 from dataclasses import replace
 from pathlib import Path
+from statistics import NormalDist
 
 import pytest
 
