@@ -39,6 +39,30 @@ def test_trace_is_strict_walk_forward_and_never_resets_history() -> None:
     assert all(target.round not in history for target, history in zip(trace, strategy.histories))
 
 
+def test_target_boundary_skips_generation_but_preserves_complete_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    strategies: list[HistoryRecorder] = []
+
+    def build(_name: str) -> HistoryRecorder:
+        strategy = HistoryRecorder()
+        strategies.append(strategy)
+        return strategy
+
+    monkeypatch.setattr("lotto_lab.evaluation.build_strategy", build)
+    result = compare_strategies(
+        make_draws(),
+        strategies=("uniform",),
+        seed_count=1,
+        min_history=20,
+        target_start_round=30,
+        include_round_details=True,
+    )
+
+    assert result["round_details"]["target_rounds"] == [30, 31]
+    assert strategies[0].histories == [tuple(range(1, 30)), tuple(range(1, 31))]
+
+
 def test_comparison_is_deterministic_and_has_correct_seed_count() -> None:
     kwargs = {"seed_count": 4, "base_seed": 88, "min_history": 20, "period_size": 4}
     first = compare_strategies(make_draws(), **kwargs)

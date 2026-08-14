@@ -6,14 +6,16 @@ import math
 import statistics
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from statistics import NormalDist
 from typing import Any
 
 from .evaluation import compare_strategies
 from .models import Draw
 from .strategy import build_strategy, canonical_strategy_manifest
 
-DEVELOPMENT_END_ROUND = 1236
-PROSPECTIVE_HOLDOUT_START_ROUND = 1237
+EARLIEST_DEVELOPMENT_END_ROUND = 1236
+EARLIEST_PROSPECTIVE_HOLDOUT_START_ROUND = 1237
+MIN_PROSPECTIVE_HOLDOUT_ROUNDS = 50
 SUPPORTED_SCHEMA_VERSION = 1
 SUPPORTED_EVALUATION_PROTOCOL_VERSION = 1
 SUPPORTED_PRIMARY_METRICS = {"delta_mean_matches_mean"}
@@ -87,15 +89,10 @@ class ExperimentSpec:
             raise ValueError("development_end_round must be >= 1")
         if self.holdout_start_round != self.development_end_round + 1:
             raise ValueError("holdout_start_round must equal development_end_round + 1")
-        if (self.development_end_round, self.holdout_start_round) != (
-            DEVELOPMENT_END_ROUND,
-            PROSPECTIVE_HOLDOUT_START_ROUND,
-        ):
-            raise ValueError(
-                "prospective boundary must be development round 1236 / holdout round 1237"
-            )
-        if self.min_holdout_rounds < 1:
-            raise ValueError("min_holdout_rounds must be >= 1")
+        if self.development_end_round < EARLIEST_DEVELOPMENT_END_ROUND:
+            raise ValueError("development_end_round must be >= 1236")
+        if self.min_holdout_rounds < MIN_PROSPECTIVE_HOLDOUT_ROUNDS:
+            raise ValueError("min_holdout_rounds must be >= 50")
         if len(self.strategies) < 2:
             raise ValueError("strategies must contain at least two names")
         if len(set(self.strategies)) != len(self.strategies):
@@ -216,14 +213,15 @@ def evaluate_holdout(draws: list[Draw], spec: ExperimentSpec) -> dict[str, objec
             f"({spec.min_holdout_rounds} rounds), got {actual_rounds}"
         )
     inference: dict[str, dict[str, float | int]] = {}
+    critical_value = NormalDist().inv_cdf(0.975)
     for name, deltas in details["delta_mean_matches_vs_uniform"].items():
         effect = statistics.fmean(deltas)
         standard_error = statistics.stdev(deltas) / math.sqrt(len(deltas))
         inference[name] = {
             "effect": effect,
             "standard_error": standard_error,
-            "ci95_lower": effect - 1.96 * standard_error,
-            "ci95_upper": effect + 1.96 * standard_error,
+            "approx_ci95_lower": effect - critical_value * standard_error,
+            "approx_ci95_upper": effect + critical_value * standard_error,
             "rounds": len(deltas),
         }
     return {
@@ -238,15 +236,17 @@ def evaluate_holdout(draws: list[Draw], spec: ExperimentSpec) -> dict[str, objec
         "hypothesis": spec.hypothesis,
         "decision_rule": spec.decision_rule,
         "holdout_inference": {
-            "method": "paired_round_normal_approximation_v1",
+            "method": "paired_round_normal_approximation_v1_min50",
             "unit": "registered holdout round after averaging corresponding seed deltas",
             "metric": spec.primary_metric,
             "candidate_results": inference,
         },
         "interval_interpretation": (
             "Seed percentiles measure RNG seed variability conditional on the observed draws. "
-            "The holdout inference interval measures round-level sampling uncertainty over the "
-            "registered prospective outcomes. Neither guarantees future lottery performance."
+            "The holdout inference interval is a normal approximation over registered holdout "
+            "rounds; its observational unit is the holdout round after averaging corresponding "
+            "seed deltas. Seed percentiles remain RNG-seed variability, not outcome confidence "
+            "intervals. Neither is a guarantee of future performance."
         ),
         "evaluation": evaluation,
     }

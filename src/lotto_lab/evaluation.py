@@ -67,10 +67,12 @@ def _frequency_traces(
     run_seeds: list[int],
     *,
     min_history: int,
+    start_index: int | None = None,
 ) -> list[tuple[BacktestObservation, ...]]:
     """Evaluate one frequency strategy while deriving each target's weights once."""
     runs: list[list[BacktestObservation]] = [[] for _ in run_seeds]
-    for index in range(min_history, len(draws)):
+    first_index = min_history if start_index is None else max(min_history, start_index)
+    for index in range(first_index, len(draws)):
         target = draws[index]
         weights = strategy.weights(draws[:index])
         for run, run_seed in zip(runs, run_seeds):
@@ -102,27 +104,41 @@ def compare_strategies(
     if len(draws) <= min_history:
         raise ValueError("not enough draws for the requested min_history")
 
+    start_index = None
+    if target_start_round is not None:
+        start_index = next(
+            (index for index, draw in enumerate(draws) if draw.round >= target_start_round),
+            None,
+        )
+        if start_index is None:
+            raise ValueError("no target draws in the requested evaluation range")
+
     traces: dict[str, list[tuple[BacktestObservation, ...]]] = {name: [] for name in strategies}
     run_seeds = [derive_seed(base_seed, seed_index) for seed_index in range(seed_count)]
     for name in strategies:
         strategy = build_strategy(name)
         if isinstance(strategy, FrequencyStrategy):
-            traces[name] = _frequency_traces(draws, strategy, run_seeds, min_history=min_history)
+            traces[name] = _frequency_traces(
+                draws,
+                strategy,
+                run_seeds,
+                min_history=min_history,
+                start_index=start_index,
+            )
         else:
             for run_seed in run_seeds:
+                trace_options: dict[str, int] = {}
+                if start_index is not None:
+                    trace_options["start_index"] = start_index
                 traces[name].append(
-                    walk_forward_trace(draws, strategy, min_history=min_history, seed=run_seed)
+                    walk_forward_trace(
+                        draws,
+                        strategy,
+                        min_history=min_history,
+                        seed=run_seed,
+                        **trace_options,
+                    )
                 )
-
-    if target_start_round is not None:
-        traces = {
-            name: [
-                tuple(item for item in trace if item.round >= target_start_round) for trace in runs
-            ]
-            for name, runs in traces.items()
-        }
-        if not traces["uniform"][0]:
-            raise ValueError("no target draws in the requested evaluation range")
 
     metrics = {name: [_metrics(trace) for trace in runs] for name, runs in traces.items()}
     baseline = metrics["uniform"]
