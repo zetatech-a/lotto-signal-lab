@@ -114,7 +114,10 @@ def command_holdout_status(args: argparse.Namespace) -> None:
 def command_holdout_evaluate(args: argparse.Namespace) -> None:
     try:
         spec = load_experiment_spec(args.spec)
-        result = evaluate_holdout(_repository(args.db).list_draws(), spec)
+        repository = _repository(args.db)
+        result = evaluate_holdout(
+            repository.list_draws(), spec, draw_sources=repository.list_draw_sources()
+        )
     except (ValueError, TypeError) as error:
         raise SystemExit(str(error)) from error
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))

@@ -1,4 +1,5 @@
 import json
+from statistics import NormalDist
 from dataclasses import replace
 from pathlib import Path
 
@@ -66,6 +67,10 @@ def make_draw(round_no: int) -> Draw:
 
 def make_draws(end_round: int) -> list[Draw]:
     return [make_draw(round_no) for round_no in range(1, end_round + 1)]
+
+
+def make_sources(end_round: int, source: str = "dhlottery") -> dict[int, str]:
+    return dict.fromkeys(range(1, end_round + 1), source)
 
 
 def test_development_freeze_file_and_constants() -> None:
@@ -187,7 +192,7 @@ def test_unready_evaluation_stops_before_trace_generation(monkeypatch: pytest.Mo
 
     monkeypatch.setattr("lotto_lab.holdout.compare_strategies", forbidden)
     with pytest.raises(ValueError, match="requires 50 completed rounds; only 1"):
-        evaluate_holdout(make_draws(1237), spec)
+        evaluate_holdout(make_draws(1237), spec, draw_sources=make_sources(1237))
     assert called is False
 
 
@@ -207,7 +212,7 @@ def test_evaluation_targets_exact_holdout_without_resetting_history(
         return original(self, history)
 
     monkeypatch.setattr(FrequencyStrategy, "weights", recording)
-    result = evaluate_holdout(draws, spec)
+    result = evaluate_holdout(draws, spec, draw_sources=make_sources(1286))
     periods = result["evaluation"]["period_results"]["uniform"]
     assert periods[0]["target_round_start"] == 1237
     assert all(period["target_round_start"] > 1236 for period in periods)
@@ -235,7 +240,7 @@ def test_later_boundary_uses_all_prior_draws_and_never_its_target(
         return original(self, history)
 
     monkeypatch.setattr(FrequencyStrategy, "weights", recording)
-    evaluate_holdout(make_draws(1350), spec)
+    evaluate_holdout(make_draws(1350), spec, draw_sources=make_sources(1350))
 
     assert histories[0] == tuple(range(1, 1301))
     assert histories[1] == tuple(range(1, 1302))
@@ -261,8 +266,8 @@ def test_registered_horizon_is_immutable_and_later_targets_are_not_evaluated(
         }
 
     monkeypatch.setattr("lotto_lab.holdout.compare_strategies", recording_compare)
-    first = evaluate_holdout(make_draws(1287), spec)
-    second = evaluate_holdout(make_draws(1288), spec)
+    first = evaluate_holdout(make_draws(1287), spec, draw_sources=make_sources(1287))
+    second = evaluate_holdout(make_draws(1288), spec, draw_sources=make_sources(1288))
 
     assert first == second
     assert first["holdout_end_round"] == 1286
@@ -422,7 +427,7 @@ def test_mutated_manifest_is_rejected_at_public_boundaries(
         elif operation == "status":
             holdout_status([], spec)
         else:
-            evaluate_holdout([], spec)
+            evaluate_holdout([], spec, draw_sources={})
 
 
 def test_evaluation_rejects_incomplete_provenance(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -438,7 +443,7 @@ def test_evaluation_rejects_incomplete_provenance(monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr("lotto_lab.holdout.compare_strategies", incomplete)
     with pytest.raises(ValueError, match="evaluation target range mismatch"):
-        evaluate_holdout(make_draws(1286), spec)
+        evaluate_holdout(make_draws(1286), spec, draw_sources=make_sources(1286))
 
 
 def test_round_level_holdout_inference_is_deterministic(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -453,13 +458,89 @@ def test_round_level_holdout_inference_is_deterministic(monkeypatch: pytest.Monk
         }
 
     monkeypatch.setattr("lotto_lab.holdout.compare_strategies", synthetic)
-    inference = evaluate_holdout(make_draws(1286), spec)["holdout_inference"]
-    assert inference["method"] == "paired_round_normal_approximation_v1_min50"
+    inference = evaluate_holdout(make_draws(1286), spec, draw_sources=make_sources(1286))["holdout_inference"]
+    assert inference["method"] == "paired_round_normal_approximation_bonferroni_v1_min50"
+    assert inference["candidate_count"] == 1
+    assert inference["critical_value"] == pytest.approx(NormalDist().inv_cdf(0.975))
     result = inference["candidate_results"]["hot"]
     assert result == {
         "effect": 24.5,
         "standard_error": pytest.approx(2.0615528128088303),
-        "approx_ci95_lower": pytest.approx(20.45942918640784),
-        "approx_ci95_upper": pytest.approx(28.54057081359216),
+        "approx_familywise_ci95_lower": pytest.approx(20.45942918640784),
+        "approx_familywise_ci95_upper": pytest.approx(28.54057081359216),
         "rounds": 50,
     }
+
+
+def test_bonferroni_interval_widens_with_candidate_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def synthetic(*args: object, **kwargs: object) -> dict[str, object]:
+        names = kwargs["strategies"]
+        return {
+            "round_details": {
+                "target_rounds": list(range(1237, 1287)),
+                "delta_mean_matches_vs_uniform": {
+                    name: list(range(50)) for name in names if name != "uniform"
+                },
+            }
+        }
+
+    monkeypatch.setattr("lotto_lab.holdout.compare_strategies", synthetic)
+    widths = []
+    for strategies in (("uniform", "hot"), ("uniform", "hot", "cold")):
+        spec = ExperimentSpec.from_dict(spec_payload(strategies=list(strategies)))
+        inference = evaluate_holdout(
+            make_draws(1286), spec, draw_sources=make_sources(1286)
+        )["holdout_inference"]
+        result = inference["candidate_results"]["hot"]
+        widths.append(
+            result["approx_familywise_ci95_upper"]
+            - result["approx_familywise_ci95_lower"]
+        )
+        assert inference["candidate_count"] == len(strategies) - 1
+        assert inference["per_candidate_alpha"] == pytest.approx(
+            0.05 / (len(strategies) - 1)
+        )
+        assert inference["critical_value"] == pytest.approx(
+            NormalDist().inv_cdf(1 - (0.05 / (len(strategies) - 1)) / 2)
+        )
+    assert widths[1] > widths[0]
+
+
+def test_draw_provenance_is_preserved_and_compacted(monkeypatch: pytest.MonkeyPatch) -> None:
+    spec = ExperimentSpec.from_dict(spec_payload())
+
+    def synthetic(*args: object, **kwargs: object) -> dict[str, object]:
+        return {
+            "round_details": {
+                "target_rounds": list(range(1237, 1287)),
+                "delta_mean_matches_vs_uniform": {"hot": [0.0] * 50},
+            }
+        }
+
+    monkeypatch.setattr("lotto_lab.holdout.compare_strategies", synthetic)
+    sources = make_sources(1287)
+    for round_no in range(1240, 1287):
+        sources[round_no] = "csv"
+    sources[1287] = "ignored-after-horizon"
+    result = evaluate_holdout(make_draws(1287), spec, draw_sources=sources)
+    provenance = result["draw_provenance"]
+    assert provenance["source_counts"] == {"csv": 47, "dhlottery": 1239}
+    assert provenance["holdout_source_counts"] == {"csv": 47, "dhlottery": 3}
+    assert provenance["holdout_all_preferred_official_source"] is False
+    assert provenance["source_ranges"][-1] == {
+        "round_start": 1240,
+        "round_end": 1286,
+        "source": "csv",
+    }
+    assert "ignored-after-horizon" not in str(provenance)
+
+
+@pytest.mark.parametrize("sources", [{}, {1: ""}])
+def test_missing_or_empty_draw_provenance_fails_explicitly(
+    sources: dict[int, str],
+) -> None:
+    spec = ExperimentSpec.from_dict(spec_payload())
+    with pytest.raises(ValueError, match="draw provenance is incomplete or invalid"):
+        evaluate_holdout(make_draws(1286), spec, draw_sources=sources)

@@ -10,6 +10,7 @@ def test_repository_round_trip(tmp_path) -> None:
     draws = repository.list_draws()
     assert len(draws) == 1
     assert draws[0].round == 1
+    assert repository.list_draw_sources() == {1: "test"}
 
 
 def test_validate_integrity(tmp_path) -> None:

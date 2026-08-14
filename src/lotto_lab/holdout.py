@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import statistics
+from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from statistics import NormalDist
@@ -106,7 +107,7 @@ class ExperimentSpec:
         if "uniform" not in self.strategies:
             raise ValueError("strategies must include uniform as the paired baseline")
         if not isinstance(self.strategy_manifest, dict):
-            raise ValueError("strategy_manifest must be a JSON object")
+            raise TypeError("strategy_manifest must be a JSON object")
         expected_manifest = {
             name: canonical_strategy_manifest(name) for name in self.strategies
         }
@@ -188,7 +189,58 @@ def holdout_status(rounds: list[int], spec: ExperimentSpec) -> dict[str, object]
     }
 
 
-def evaluate_holdout(draws: list[Draw], spec: ExperimentSpec) -> dict[str, object]:
+def _draw_provenance(
+    draw_sources: dict[int, str], spec: ExperimentSpec, holdout_end_round: int
+) -> dict[str, object]:
+    required_rounds = range(1, holdout_end_round + 1)
+    missing = [round_no for round_no in required_rounds if round_no not in draw_sources]
+    invalid = [
+        round_no
+        for round_no in required_rounds
+        if round_no in draw_sources
+        and (not isinstance(draw_sources[round_no], str) or not draw_sources[round_no].strip())
+    ]
+    if missing or invalid:
+        raise ValueError(
+            "draw provenance is incomplete or invalid through the registered holdout horizon: "
+            f"missing={missing[:20]}, invalid={invalid[:20]}"
+        )
+
+    registered = {round_no: draw_sources[round_no] for round_no in required_rounds}
+    source_ranges: list[dict[str, object]] = []
+    range_start = 1
+    range_source = registered[1]
+    for round_no in range(2, holdout_end_round + 1):
+        source = registered[round_no]
+        if source != range_source:
+            source_ranges.append(
+                {"round_start": range_start, "round_end": round_no - 1, "source": range_source}
+            )
+            range_start = round_no
+            range_source = source
+    source_ranges.append(
+        {"round_start": range_start, "round_end": holdout_end_round, "source": range_source}
+    )
+    holdout_sources = {
+        round_no: registered[round_no]
+        for round_no in range(spec.holdout_start_round, holdout_end_round + 1)
+    }
+    return {
+        "preferred_official_source": "dhlottery",
+        "registered_round_start": 1,
+        "registered_round_end": holdout_end_round,
+        "source_counts": dict(sorted(Counter(registered.values()).items())),
+        "holdout_source_counts": dict(sorted(Counter(holdout_sources.values()).items())),
+        "holdout_all_preferred_official_source": all(
+            source == "dhlottery" for source in holdout_sources.values()
+        ),
+        "source_ranges": source_ranges,
+    }
+
+
+def evaluate_holdout(
+    draws: list[Draw], spec: ExperimentSpec, *, draw_sources: dict[int, str]
+) -> dict[str, object]:
     spec.validate()
     _, available = holdout_availability([draw.round for draw in draws], spec)
     if available < spec.min_holdout_rounds:
@@ -196,6 +248,7 @@ def evaluate_holdout(draws: list[Draw], spec: ExperimentSpec) -> dict[str, objec
             f"holdout requires {spec.min_holdout_rounds} completed rounds; only {available} are available"
         )
     holdout_end_round = spec.holdout_start_round + spec.min_holdout_rounds - 1
+    provenance = _draw_provenance(draw_sources, spec, holdout_end_round)
     registered_draws = [draw for draw in draws if draw.round <= holdout_end_round]
     evaluation = compare_strategies(
         registered_draws,
@@ -217,15 +270,21 @@ def evaluate_holdout(draws: list[Draw], spec: ExperimentSpec) -> dict[str, objec
             f"({spec.min_holdout_rounds} rounds), got {actual_rounds}"
         )
     inference: dict[str, dict[str, float | int]] = {}
-    critical_value = NormalDist().inv_cdf(0.975)
-    for name, deltas in details["delta_mean_matches_vs_uniform"].items():
+    candidates = [name for name in spec.strategies if name != "uniform"]
+    candidate_count = len(candidates)
+    familywise_alpha = 0.05
+    per_candidate_alpha = familywise_alpha / candidate_count
+    critical_value = NormalDist().inv_cdf(1 - per_candidate_alpha / 2)
+    deltas_by_candidate = details["delta_mean_matches_vs_uniform"]
+    for name in candidates:
+        deltas = deltas_by_candidate[name]
         effect = statistics.fmean(deltas)
         standard_error = statistics.stdev(deltas) / math.sqrt(len(deltas))
         inference[name] = {
             "effect": effect,
             "standard_error": standard_error,
-            "approx_ci95_lower": effect - critical_value * standard_error,
-            "approx_ci95_upper": effect + critical_value * standard_error,
+            "approx_familywise_ci95_lower": effect - critical_value * standard_error,
+            "approx_familywise_ci95_upper": effect + critical_value * standard_error,
             "rounds": len(deltas),
         }
     return {
@@ -236,21 +295,31 @@ def evaluate_holdout(draws: list[Draw], spec: ExperimentSpec) -> dict[str, objec
         "holdout_end_round": holdout_end_round,
         "holdout_rounds": spec.min_holdout_rounds,
         "based_on_round": holdout_end_round,
+        "draw_provenance": provenance,
         "primary_metric": spec.primary_metric,
         "hypothesis": spec.hypothesis,
         "decision_rule": spec.decision_rule,
         "holdout_inference": {
-            "method": "paired_round_normal_approximation_v1_min50",
+            "method": "paired_round_normal_approximation_bonferroni_v1_min50",
             "unit": "registered holdout round after averaging corresponding seed deltas",
             "metric": spec.primary_metric,
+            "multiplicity_method": "bonferroni",
+            "multiplicity_scope": "non_uniform_candidates_in_this_experiment_spec",
+            "familywise_alpha": familywise_alpha,
+            "candidate_count": candidate_count,
+            "per_candidate_alpha": per_candidate_alpha,
+            "critical_value": critical_value,
             "candidate_results": inference,
         },
         "interval_interpretation": (
             "Seed percentiles measure RNG seed variability conditional on the observed draws. "
-            "The holdout inference interval is a normal approximation over registered holdout "
-            "rounds; its observational unit is the holdout round after averaging corresponding "
-            "seed deltas. Seed percentiles remain RNG-seed variability, not outcome confidence "
-            "intervals. Neither is a guarantee of future performance."
+            "The holdout inference intervals are Bonferroni simultaneous normal approximations "
+            "across all non-uniform candidates registered in this experiment spec, over registered "
+            "holdout rounds; their observational unit is the holdout round after averaging "
+            "corresponding seed deltas. They are not exact finite-sample intervals. Seed percentiles "
+            "remain RNG-seed variability, not outcome confidence intervals, and single-candidate "
+            "intervals must not be substituted for this familywise inference. Neither is a guarantee "
+            "of future performance."
         ),
         "evaluation": evaluation,
     }
