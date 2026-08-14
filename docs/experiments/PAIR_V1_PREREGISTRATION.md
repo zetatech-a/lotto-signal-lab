@@ -822,11 +822,16 @@ Once the boundary is instantiated, the prospective ExperimentSpec must use:
 | period_size | `50` |
 | min_holdout_rounds | `100` |
 | primary_metric | `mean_matches` |
-| evaluation protocol | existing v0.4 prospective inference protocol |
+| evaluation_protocol_version | `1` |
 | holdout start | \(N+1\) |
 | holdout end | \(N+100\) |
 
 The registered prospective range therefore contains exactly 100 rounds.
+
+The value `1` is the repository's existing machine-readable ExperimentSpec protocol identifier.
+References to `v0.4` describe the repository/guardrail milestone, not an ExperimentSpec protocol
+identifier. This registration uses the existing protocol semantics and does not define a new
+evaluation protocol version.
 
 If
 
@@ -1088,7 +1093,10 @@ At minimum, the manifest must encode the following semantics:
 | bonus used | `false` |
 | recency decay | `none` |
 
-`min_history`, seed configuration, period size, holdout horizon, primary metric, evaluation protocol version, and prospective boundary remain ExperimentSpec fields and must also participate in the overall experiment fingerprint according to the existing v0.4 rules.
+`min_history`, seed configuration, period size, holdout horizon, primary metric,
+`evaluation_protocol_version = 1`, and prospective boundary remain ExperimentSpec fields and must
+also participate in the overall experiment fingerprint according to the rules established at the
+v0.4 repository/guardrail milestone. Here, `v0.4` is not the ExperimentSpec protocol identifier.
 
 If behavior changes in a way not represented by the existing manifest, the manifest must be extended before prospective registration.
 
