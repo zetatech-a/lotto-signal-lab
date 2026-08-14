@@ -1,5 +1,6 @@
 import json
 from dataclasses import replace
+from datetime import date
 from pathlib import Path
 from statistics import NormalDist
 
@@ -526,6 +527,8 @@ def test_draw_provenance_is_preserved_and_compacted(monkeypatch: pytest.MonkeyPa
     sources[1287] = "ignored-after-horizon"
     result = evaluate_holdout(make_draws(1287), spec, draw_sources=sources)
     provenance = result["draw_provenance"]
+    assert provenance["registered_draws_digest_version"] == 1
+    assert len(provenance["registered_draws_sha256"]) == 64
     assert provenance["source_counts"] == {"csv": 47, "dhlottery": 1239}
     assert provenance["holdout_source_counts"] == {"csv": 47, "dhlottery": 3}
     assert provenance["holdout_all_preferred_official_source"] is False
@@ -535,6 +538,69 @@ def test_draw_provenance_is_preserved_and_compacted(monkeypatch: pytest.MonkeyPa
         "source": "csv",
     }
     assert "ignored-after-horizon" not in str(provenance)
+
+
+def test_registered_draw_digest_binds_complete_draw_contents_and_horizon(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = ExperimentSpec.from_dict(spec_payload())
+
+    def synthetic(*args: object, **kwargs: object) -> dict[str, object]:
+        return {
+            "round_details": {
+                "target_rounds": list(range(1237, 1287)),
+                "delta_mean_matches_vs_uniform": {"hot": [0.0] * 50},
+            }
+        }
+
+    monkeypatch.setattr("lotto_lab.holdout.compare_strategies", synthetic)
+    draws = make_draws(1287)
+    sources = make_sources(1287)
+
+    def digest(candidate_draws: list[Draw]) -> str:
+        result = evaluate_holdout(candidate_draws, spec, draw_sources=sources)
+        return result["draw_provenance"]["registered_draws_sha256"]
+
+    original_digest = digest(draws)
+    assert digest(list(draws)) == original_digest
+
+    changed_number = list(draws)
+    changed_number[0] = Draw(1, (2, 3, 4, 5, 6, 7), 1)
+    assert digest(changed_number) != original_digest
+
+    changed_bonus = list(draws)
+    changed_bonus[0] = replace(changed_bonus[0], bonus=2)
+    assert digest(changed_bonus) != original_digest
+
+    changed_date = list(draws)
+    changed_date[0] = replace(changed_date[0], draw_date=date(2002, 12, 7))
+    assert digest(changed_date) != original_digest
+
+    changed_after_horizon = list(draws)
+    changed_after_horizon[-1] = Draw(1287, (1, 2, 3, 4, 5, 6), 7, date(2099, 1, 1))
+    assert digest(changed_after_horizon) == original_digest
+
+
+def test_registered_result_ignores_post_horizon_draw_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = ExperimentSpec.from_dict(spec_payload())
+
+    def synthetic(*args: object, **kwargs: object) -> dict[str, object]:
+        return {
+            "round_details": {
+                "target_rounds": list(range(1237, 1287)),
+                "delta_mean_matches_vs_uniform": {"hot": [0.0] * 50},
+            }
+        }
+
+    monkeypatch.setattr("lotto_lab.holdout.compare_strategies", synthetic)
+    draws = make_draws(1287)
+    changed = [*draws[:-1], Draw(1287, (1, 2, 3, 4, 5, 6), 7, date(2099, 1, 1))]
+    sources = make_sources(1287)
+    assert evaluate_holdout(draws, spec, draw_sources=sources) == evaluate_holdout(
+        changed, spec, draw_sources=sources
+    )
 
 
 @pytest.mark.parametrize("sources", [{}, {1: ""}])

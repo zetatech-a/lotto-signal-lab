@@ -238,6 +238,22 @@ def _draw_provenance(
     }
 
 
+def _registered_draws_sha256(draws: list[Draw]) -> str:
+    canonical_draws = [
+        {
+            "bonus": draw.bonus,
+            "draw_date": draw.draw_date.isoformat() if draw.draw_date else None,
+            "numbers": list(draw.numbers),
+            "round": draw.round,
+        }
+        for draw in sorted(draws, key=lambda draw: draw.round)
+    ]
+    canonical = json.dumps(
+        canonical_draws, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def evaluate_holdout(
     draws: list[Draw], spec: ExperimentSpec, *, draw_sources: dict[int, str]
 ) -> dict[str, object]:
@@ -250,6 +266,8 @@ def evaluate_holdout(
     holdout_end_round = spec.holdout_start_round + spec.min_holdout_rounds - 1
     provenance = _draw_provenance(draw_sources, spec, holdout_end_round)
     registered_draws = [draw for draw in draws if draw.round <= holdout_end_round]
+    provenance["registered_draws_digest_version"] = 1
+    provenance["registered_draws_sha256"] = _registered_draws_sha256(registered_draws)
     evaluation = compare_strategies(
         registered_draws,
         strategies=spec.strategies,
