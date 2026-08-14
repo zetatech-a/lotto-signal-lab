@@ -67,10 +67,12 @@ def _frequency_traces(
     run_seeds: list[int],
     *,
     min_history: int,
+    start_index: int | None = None,
 ) -> list[tuple[BacktestObservation, ...]]:
     """Evaluate one frequency strategy while deriving each target's weights once."""
     runs: list[list[BacktestObservation]] = [[] for _ in run_seeds]
-    for index in range(min_history, len(draws)):
+    first_index = min_history if start_index is None else max(min_history, start_index)
+    for index in range(first_index, len(draws)):
         target = draws[index]
         weights = strategy.weights(draws[:index])
         for run, run_seed in zip(runs, run_seeds):
@@ -88,6 +90,8 @@ def compare_strategies(
     base_seed: int = 20260811,
     min_history: int = 200,
     period_size: int = 200,
+    target_start_round: int | None = None,
+    include_round_details: bool = False,
 ) -> dict[str, object]:
     if seed_count <= 0:
         raise ValueError("seed_count must be > 0")
@@ -100,21 +104,39 @@ def compare_strategies(
     if len(draws) <= min_history:
         raise ValueError("not enough draws for the requested min_history")
 
-    traces: dict[str, list[tuple[BacktestObservation, ...]]] = {
-        name: [] for name in strategies
-    }
+    start_index = None
+    if target_start_round is not None:
+        start_index = next(
+            (index for index, draw in enumerate(draws) if draw.round >= target_start_round),
+            None,
+        )
+        if start_index is None:
+            raise ValueError("no target draws in the requested evaluation range")
+
+    traces: dict[str, list[tuple[BacktestObservation, ...]]] = {name: [] for name in strategies}
     run_seeds = [derive_seed(base_seed, seed_index) for seed_index in range(seed_count)]
     for name in strategies:
         strategy = build_strategy(name)
         if isinstance(strategy, FrequencyStrategy):
             traces[name] = _frequency_traces(
-                draws, strategy, run_seeds, min_history=min_history
+                draws,
+                strategy,
+                run_seeds,
+                min_history=min_history,
+                start_index=start_index,
             )
         else:
             for run_seed in run_seeds:
+                trace_options: dict[str, int] = {}
+                if start_index is not None:
+                    trace_options["start_index"] = start_index
                 traces[name].append(
                     walk_forward_trace(
-                        draws, strategy, min_history=min_history, seed=run_seed
+                        draws,
+                        strategy,
+                        min_history=min_history,
+                        seed=run_seed,
+                        **trace_options,
                     )
                 )
 
@@ -127,8 +149,7 @@ def compare_strategies(
         hit_values = [run.hit_3_plus_rate for run in runs]
         mean_deltas = [run.mean_matches - base.mean_matches for run, base in zip(runs, baseline)]
         hit_deltas = [
-            run.hit_3_plus_rate - base.hit_3_plus_rate
-            for run, base in zip(runs, baseline)
+            run.hit_3_plus_rate - base.hit_3_plus_rate for run, base in zip(runs, baseline)
         ]
         aggregates[name] = {
             "seed_runs": seed_count,
@@ -190,7 +211,7 @@ def compare_strategies(
         period_results[name] = blocks
 
     probabilities = random_match_probabilities()
-    return {
+    result: dict[str, object] = {
         "based_on_round": draws[-1].round,
         "draw_count": len(draws),
         "min_history": min_history,
@@ -206,3 +227,21 @@ def compare_strategies(
         "period_results": period_results,
         "interval_interpretation": INTERVAL_INTERPRETATION,
     }
+    if include_round_details:
+        round_deltas: dict[str, list[float]] = {}
+        baseline_traces = traces["uniform"]
+        for name in strategies:
+            if name == "uniform":
+                continue
+            round_deltas[name] = [
+                statistics.fmean(
+                    candidate[index].matches - baseline[index].matches
+                    for candidate, baseline in zip(traces[name], baseline_traces)
+                )
+                for index in range(len(target_rounds))
+            ]
+        result["round_details"] = {
+            "target_rounds": list(target_rounds),
+            "delta_mean_matches_vs_uniform": round_deltas,
+        }
+    return result

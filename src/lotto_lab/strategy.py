@@ -169,3 +169,28 @@ def build_strategy(name: str) -> Strategy:
         mode = name.removeprefix("gap-")
         return GapStrategy(mode=mode, name=name)
     raise ValueError(f"unknown strategy: {name}")
+
+
+def canonical_strategy_manifest(name: str) -> dict[str, object]:
+    """Return the behavior-affecting public configuration for a named strategy."""
+    strategy = build_strategy(name)
+    manifest: dict[str, object] = {
+        "implementation": type(strategy).__name__,
+        "parameters": {},
+    }
+    parameters: dict[str, object] = {}
+    if isinstance(strategy, FrequencyStrategy):
+        parameters.update(
+            mode=strategy.mode,
+            z_to_log_weight=strategy.z_to_log_weight,
+            max_log_tilt=strategy.max_log_tilt,
+        )
+    if isinstance(strategy, FrequencyDriftStrategy):
+        parameters.update(
+            recent_window=strategy.recent_window,
+            long_window=strategy.long_window,
+        )
+        # Drift does not use FrequencyStrategy.mode in its scoring behavior.
+        parameters.pop("mode")
+    manifest["parameters"] = parameters
+    return manifest

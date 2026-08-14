@@ -90,6 +90,7 @@ def walk_forward_trace(
     *,
     min_history: int = 200,
     seed: int = 20260811,
+    start_index: int | None = None,
 ) -> tuple[BacktestObservation, ...]:
     """Return per-target results using all, and only, preceding draws as history."""
     if min_history < 20:
@@ -97,8 +98,12 @@ def walk_forward_trace(
     if len(draws) <= min_history:
         raise ValueError("not enough draws for the requested min_history")
 
+    first_index = min_history if start_index is None else max(min_history, start_index)
+    if first_index >= len(draws):
+        raise ValueError("no target draws in the requested evaluation range")
+
     observations: list[BacktestObservation] = []
-    for index in range(min_history, len(draws)):
+    for index in range(first_index, len(draws)):
         # Strict walk-forward split: the target draw is never present in history.
         history = draws[:index]
         target = draws[index]

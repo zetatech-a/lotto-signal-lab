@@ -1,0 +1,343 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+import statistics
+from collections import Counter
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from statistics import NormalDist
+from typing import Any
+
+from .evaluation import compare_strategies
+from .models import Draw
+from .strategy import build_strategy, canonical_strategy_manifest
+
+EARLIEST_DEVELOPMENT_END_ROUND = 1236
+EARLIEST_PROSPECTIVE_HOLDOUT_START_ROUND = 1237
+MIN_PROSPECTIVE_HOLDOUT_ROUNDS = 50
+SUPPORTED_SCHEMA_VERSION = 1
+SUPPORTED_EVALUATION_PROTOCOL_VERSION = 1
+SUPPORTED_PRIMARY_METRICS = {"delta_mean_matches_mean"}
+
+
+@dataclass(frozen=True, slots=True)
+class ExperimentSpec:
+    schema_version: int
+    evaluation_protocol_version: int
+    experiment_id: str
+    development_end_round: int
+    holdout_start_round: int
+    min_holdout_rounds: int
+    strategies: tuple[str, ...]
+    strategy_manifest: dict[str, dict[str, object]]
+    seed_count: int
+    base_seed: int
+    min_history: int
+    period_size: int
+    primary_metric: str
+    hypothesis: str
+    decision_rule: str
+
+    def __post_init__(self) -> None:
+        self.validate()
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> ExperimentSpec:
+        fields = tuple(cls.__dataclass_fields__)
+        missing = [name for name in fields if name not in payload]
+        extra = sorted(set(payload) - set(fields))
+        if missing:
+            raise ValueError(f"experiment spec missing required fields: {', '.join(missing)}")
+        if extra:
+            raise ValueError(f"experiment spec has unknown fields: {', '.join(extra)}")
+        values = dict(payload)
+        strategies = values["strategies"]
+        if not isinstance(strategies, list) or not all(
+            isinstance(name, str) for name in strategies
+        ):
+            raise ValueError("strategies must be a JSON array of strategy names")
+        values["strategies"] = tuple(strategies)
+        return cls(**values)
+
+    def validate(self) -> None:
+        integer_fields = (
+            "schema_version",
+            "evaluation_protocol_version",
+            "development_end_round",
+            "holdout_start_round",
+            "min_holdout_rounds",
+            "seed_count",
+            "base_seed",
+            "min_history",
+            "period_size",
+        )
+        for name in integer_fields:
+            if type(getattr(self, name)) is not int:
+                raise ValueError(f"{name} must be an integer")
+        if self.schema_version != SUPPORTED_SCHEMA_VERSION:
+            raise ValueError(f"unsupported schema_version: {self.schema_version}")
+        if self.evaluation_protocol_version != SUPPORTED_EVALUATION_PROTOCOL_VERSION:
+            raise ValueError(
+                "unsupported evaluation_protocol_version: "
+                f"{self.evaluation_protocol_version}"
+            )
+        for name in ("experiment_id", "primary_metric", "hypothesis", "decision_rule"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{name} must be a non-empty string")
+        if self.development_end_round < 1:
+            raise ValueError("development_end_round must be >= 1")
+        if self.holdout_start_round != self.development_end_round + 1:
+            raise ValueError("holdout_start_round must equal development_end_round + 1")
+        if self.development_end_round < EARLIEST_DEVELOPMENT_END_ROUND:
+            raise ValueError("development_end_round must be >= 1236")
+        if self.min_holdout_rounds < MIN_PROSPECTIVE_HOLDOUT_ROUNDS:
+            raise ValueError("min_holdout_rounds must be >= 50")
+        if len(self.strategies) < 2:
+            raise ValueError("strategies must contain at least two names")
+        if len(set(self.strategies)) != len(self.strategies):
+            raise ValueError("strategies must not contain duplicates")
+        for name in self.strategies:
+            try:
+                build_strategy(name)
+            except ValueError as error:
+                raise ValueError(f"invalid strategy name: {name}") from error
+        if "uniform" not in self.strategies:
+            raise ValueError("strategies must include uniform as the paired baseline")
+        if not isinstance(self.strategy_manifest, dict):
+            raise TypeError("strategy_manifest must be a JSON object")
+        expected_manifest = {
+            name: canonical_strategy_manifest(name) for name in self.strategies
+        }
+        if set(self.strategy_manifest) != set(self.strategies):
+            raise ValueError("strategy_manifest keys must exactly match strategies")
+        if self.strategy_manifest != expected_manifest:
+            raise ValueError("strategy_manifest does not match the current strategy configuration")
+        if self.seed_count < 1:
+            raise ValueError("seed_count must be >= 1")
+        if self.min_history < 20:
+            raise ValueError("min_history must be >= 20")
+        if self.min_history > self.development_end_round:
+            raise ValueError("min_history must be <= development_end_round")
+        if "drift" in self.strategies and self.min_history < 300:
+            raise ValueError("drift requires min_history >= 300")
+        if self.period_size < 1:
+            raise ValueError("period_size must be >= 1")
+        if self.min_holdout_rounds < 2 * self.period_size:
+            raise ValueError("min_holdout_rounds must be >= 2 * period_size")
+        if self.primary_metric not in SUPPORTED_PRIMARY_METRICS:
+            raise ValueError(f"unsupported primary_metric: {self.primary_metric}")
+
+    def fingerprint(self) -> str:
+        self.validate()
+        payload = asdict(self)
+        payload["strategies"] = list(self.strategies)
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def load_experiment_spec(path: str | Path) -> ExperimentSpec:
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"cannot read experiment spec: {error}") from error
+    if not isinstance(payload, dict):
+        raise TypeError("experiment spec must be a JSON object")
+    return ExperimentSpec.from_dict(payload)
+
+
+def holdout_availability(rounds: list[int], spec: ExperimentSpec) -> tuple[int | None, int]:
+    latest = max(rounds, default=None)
+    if latest is None:
+        return None, 0
+
+    holdout_end_round = spec.holdout_start_round + spec.min_holdout_rounds - 1
+    relevant_end_round = min(latest, holdout_end_round)
+    stored_relevant_rounds = [number for number in rounds if number <= relevant_end_round]
+    expected = list(range(1, relevant_end_round + 1))
+    if stored_relevant_rounds != expected:
+        missing = sorted(set(expected) - set(stored_relevant_rounds))
+        duplicates = sorted(
+            number
+            for number in set(stored_relevant_rounds)
+            if stored_relevant_rounds.count(number) > 1
+        )
+        raise ValueError(
+            "stored draw rounds are not contiguous from round 1: "
+            f"missing={missing[:20]}, duplicates={duplicates[:20]}"
+        )
+    available = max(0, relevant_end_round - spec.holdout_start_round + 1)
+    return latest, available
+
+
+def holdout_status(rounds: list[int], spec: ExperimentSpec) -> dict[str, object]:
+    spec.validate()
+    latest, available = holdout_availability(rounds, spec)
+    holdout_end_round = spec.holdout_start_round + spec.min_holdout_rounds - 1
+    return {
+        "experiment_id": spec.experiment_id,
+        "experiment_spec_sha256": spec.fingerprint(),
+        "development_end_round": spec.development_end_round,
+        "holdout_start_round": spec.holdout_start_round,
+        "holdout_end_round": holdout_end_round,
+        "latest_stored_round": latest,
+        "available_holdout_rounds": available,
+        "required_holdout_rounds": spec.min_holdout_rounds,
+        "ready_to_reveal": available >= spec.min_holdout_rounds,
+    }
+
+
+def _draw_provenance(
+    draw_sources: dict[int, str], spec: ExperimentSpec, holdout_end_round: int
+) -> dict[str, object]:
+    required_rounds = range(1, holdout_end_round + 1)
+    missing = [round_no for round_no in required_rounds if round_no not in draw_sources]
+    invalid = [
+        round_no
+        for round_no in required_rounds
+        if round_no in draw_sources
+        and (not isinstance(draw_sources[round_no], str) or not draw_sources[round_no].strip())
+    ]
+    if missing or invalid:
+        raise ValueError(
+            "draw provenance is incomplete or invalid through the registered holdout horizon: "
+            f"missing={missing[:20]}, invalid={invalid[:20]}"
+        )
+
+    registered = {round_no: draw_sources[round_no] for round_no in required_rounds}
+    source_ranges: list[dict[str, object]] = []
+    range_start = 1
+    range_source = registered[1]
+    for round_no in range(2, holdout_end_round + 1):
+        source = registered[round_no]
+        if source != range_source:
+            source_ranges.append(
+                {"round_start": range_start, "round_end": round_no - 1, "source": range_source}
+            )
+            range_start = round_no
+            range_source = source
+    source_ranges.append(
+        {"round_start": range_start, "round_end": holdout_end_round, "source": range_source}
+    )
+    holdout_sources = {
+        round_no: registered[round_no]
+        for round_no in range(spec.holdout_start_round, holdout_end_round + 1)
+    }
+    return {
+        "preferred_official_source": "dhlottery",
+        "registered_round_start": 1,
+        "registered_round_end": holdout_end_round,
+        "source_counts": dict(sorted(Counter(registered.values()).items())),
+        "holdout_source_counts": dict(sorted(Counter(holdout_sources.values()).items())),
+        "holdout_all_preferred_official_source": all(
+            source == "dhlottery" for source in holdout_sources.values()
+        ),
+        "source_ranges": source_ranges,
+    }
+
+
+def _registered_draws_sha256(draws: list[Draw]) -> str:
+    canonical_draws = [
+        {
+            "bonus": draw.bonus,
+            "draw_date": draw.draw_date.isoformat() if draw.draw_date else None,
+            "numbers": list(draw.numbers),
+            "round": draw.round,
+        }
+        for draw in sorted(draws, key=lambda draw: draw.round)
+    ]
+    canonical = json.dumps(
+        canonical_draws, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def evaluate_holdout(
+    draws: list[Draw], spec: ExperimentSpec, *, draw_sources: dict[int, str]
+) -> dict[str, object]:
+    spec.validate()
+    _, available = holdout_availability([draw.round for draw in draws], spec)
+    if available < spec.min_holdout_rounds:
+        raise ValueError(
+            f"holdout requires {spec.min_holdout_rounds} completed rounds; only {available} are available"
+        )
+    holdout_end_round = spec.holdout_start_round + spec.min_holdout_rounds - 1
+    provenance = _draw_provenance(draw_sources, spec, holdout_end_round)
+    registered_draws = [draw for draw in draws if draw.round <= holdout_end_round]
+    provenance["registered_draws_digest_version"] = 1
+    provenance["registered_draws_sha256"] = _registered_draws_sha256(registered_draws)
+    evaluation = compare_strategies(
+        registered_draws,
+        strategies=spec.strategies,
+        seed_count=spec.seed_count,
+        base_seed=spec.base_seed,
+        min_history=spec.min_history,
+        period_size=spec.period_size,
+        target_start_round=spec.holdout_start_round,
+        include_round_details=True,
+    )
+    details = evaluation.pop("round_details")
+    expected_rounds = list(range(spec.holdout_start_round, holdout_end_round + 1))
+    actual_rounds = details["target_rounds"]
+    if actual_rounds != expected_rounds or len(actual_rounds) != spec.min_holdout_rounds:
+        raise ValueError(
+            "evaluation target range mismatch: "
+            f"expected {expected_rounds[0]}..{expected_rounds[-1]} "
+            f"({spec.min_holdout_rounds} rounds), got {actual_rounds}"
+        )
+    inference: dict[str, dict[str, float | int]] = {}
+    candidates = [name for name in spec.strategies if name != "uniform"]
+    candidate_count = len(candidates)
+    familywise_alpha = 0.05
+    per_candidate_alpha = familywise_alpha / candidate_count
+    critical_value = NormalDist().inv_cdf(1 - per_candidate_alpha / 2)
+    deltas_by_candidate = details["delta_mean_matches_vs_uniform"]
+    for name in candidates:
+        deltas = deltas_by_candidate[name]
+        effect = statistics.fmean(deltas)
+        standard_error = statistics.stdev(deltas) / math.sqrt(len(deltas))
+        inference[name] = {
+            "effect": effect,
+            "standard_error": standard_error,
+            "approx_familywise_ci95_lower": effect - critical_value * standard_error,
+            "approx_familywise_ci95_upper": effect + critical_value * standard_error,
+            "rounds": len(deltas),
+        }
+    return {
+        "experiment_id": spec.experiment_id,
+        "experiment_spec_sha256": spec.fingerprint(),
+        "development_end_round": spec.development_end_round,
+        "holdout_start_round": spec.holdout_start_round,
+        "holdout_end_round": holdout_end_round,
+        "holdout_rounds": spec.min_holdout_rounds,
+        "based_on_round": holdout_end_round,
+        "draw_provenance": provenance,
+        "primary_metric": spec.primary_metric,
+        "hypothesis": spec.hypothesis,
+        "decision_rule": spec.decision_rule,
+        "holdout_inference": {
+            "method": "paired_round_normal_approximation_bonferroni_v1_min50",
+            "unit": "registered holdout round after averaging corresponding seed deltas",
+            "metric": spec.primary_metric,
+            "multiplicity_method": "bonferroni",
+            "multiplicity_scope": "non_uniform_candidates_in_this_experiment_spec",
+            "familywise_alpha": familywise_alpha,
+            "candidate_count": candidate_count,
+            "per_candidate_alpha": per_candidate_alpha,
+            "critical_value": critical_value,
+            "candidate_results": inference,
+        },
+        "interval_interpretation": (
+            "Seed percentiles measure RNG seed variability conditional on the observed draws. "
+            "The holdout inference intervals are Bonferroni simultaneous normal approximations "
+            "across all non-uniform candidates registered in this experiment spec, over registered "
+            "holdout rounds; their observational unit is the holdout round after averaging "
+            "corresponding seed deltas. They are not exact finite-sample intervals. Seed percentiles "
+            "remain RNG-seed variability, not outcome confidence intervals, and single-candidate "
+            "intervals must not be substituted for this familywise inference. Neither is a guarantee "
+            "of future performance."
+        ),
+        "evaluation": evaluation,
+    }

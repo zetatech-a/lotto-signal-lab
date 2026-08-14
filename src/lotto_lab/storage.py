@@ -96,6 +96,14 @@ class DrawRepository:
             for row in rows
         ]
 
+    def list_draw_sources(self) -> dict[int, str]:
+        """Return the persisted source label for every stored draw round."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT round, source FROM draws ORDER BY round ASC"
+            ).fetchall()
+        return {int(row["round"]): str(row["source"]) for row in rows}
+
     def max_round(self) -> int | None:
         with self._connect() as connection:
             row = connection.execute("SELECT MAX(round) AS max_round FROM draws").fetchone()
