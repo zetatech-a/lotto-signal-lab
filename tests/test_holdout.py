@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -14,25 +15,34 @@ from lotto_lab.holdout import (
 )
 from lotto_lab.models import Draw
 from lotto_lab.storage import DrawRepository
+from lotto_lab.strategy import canonical_strategy_manifest
 
 
 def spec_payload(**changes: object) -> dict[str, object]:
     payload: dict[str, object] = {
         "schema_version": 1,
+        "evaluation_protocol_version": 1,
         "experiment_id": "prospective-001",
         "development_end_round": 1236,
         "holdout_start_round": 1237,
         "min_holdout_rounds": 2,
         "strategies": ["uniform", "hot"],
+        "strategy_manifest": {
+            name: canonical_strategy_manifest(name) for name in ("uniform", "hot")
+        },
         "seed_count": 2,
         "base_seed": 42,
         "min_history": 20,
-        "period_size": 2,
-        "primary_metric": "paired mean match delta",
+        "period_size": 1,
+        "primary_metric": "delta_mean_matches_mean",
         "hypothesis": "The candidate differs from uniform.",
         "decision_rule": "Interpret only after the registered minimum.",
     }
     payload.update(changes)
+    if "strategies" in changes and "strategy_manifest" not in changes:
+        payload["strategy_manifest"] = {
+            name: canonical_strategy_manifest(name) for name in payload["strategies"]
+        }
     return payload
 
 
@@ -187,7 +197,14 @@ def test_registered_horizon_is_immutable_and_later_targets_are_not_evaluated(
 
     def recording_compare(draws: list[Draw], **kwargs: object) -> dict[str, object]:
         evaluated_ends.append(draws[-1].round)
-        return {"target_rounds": [1237, 1238], "settings": kwargs}
+        return {
+            "target_rounds": [1237, 1238],
+            "settings": kwargs,
+            "round_details": {
+                "target_rounds": [1237, 1238],
+                "delta_mean_matches_vs_uniform": {"hot": [0.0, 0.0]},
+            },
+        }
 
     monkeypatch.setattr("lotto_lab.holdout.compare_strategies", recording_compare)
     first = evaluate_holdout(make_draws(1239), spec)
@@ -234,3 +251,110 @@ def test_status_cli_reads_temporary_database(
     result = json.loads(capsys.readouterr().out)
     assert result["available_holdout_rounds"] == 2
     assert "evaluation" not in result
+
+
+def test_non_object_spec_fails_cli_before_database_access(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "array.json"
+    path.write_text("[]", encoding="utf-8")
+    called = False
+
+    def repository(path: str) -> None:
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr("lotto_lab.cli._repository", repository)
+    for command in ("holdout-status", "holdout-evaluate"):
+        args = build_parser().parse_args([command, "--spec", str(path)])
+        with pytest.raises(SystemExit, match="must be a JSON object"):
+            args.func(args)
+    assert called is False
+
+
+def test_min_history_cannot_skip_registered_targets() -> None:
+    assert ExperimentSpec.from_dict(spec_payload(min_history=1236)).min_history == 1236
+    with pytest.raises(ValueError, match="min_history must be <= development_end_round"):
+        ExperimentSpec.from_dict(spec_payload(min_history=1237))
+
+
+@pytest.mark.parametrize(
+    ("rounds", "period_size", "accepted"),
+    [(2, 1, True), (2, 2, False), (50, 25, True), (50, 26, False)],
+)
+def test_registered_holdout_requires_two_complete_periods(
+    rounds: int, period_size: int, accepted: bool
+) -> None:
+    payload = spec_payload(min_holdout_rounds=rounds, period_size=period_size)
+    if accepted:
+        ExperimentSpec.from_dict(payload)
+    else:
+        with pytest.raises(ValueError, match=r"min_holdout_rounds must be >= 2 \* period_size"):
+            ExperimentSpec.from_dict(payload)
+
+
+def test_protocol_and_manifest_are_fingerprinted_and_validated() -> None:
+    original = spec_payload()
+    changed = spec_payload()
+    changed_manifest = dict(changed["strategy_manifest"])
+    changed_hot = dict(changed_manifest["hot"])
+    changed_parameters = dict(changed_hot["parameters"])
+    changed_parameters["z_to_log_weight"] = 0.07
+    changed_hot["parameters"] = changed_parameters
+    changed_manifest["hot"] = changed_hot
+    changed["strategy_manifest"] = changed_manifest
+    first = ExperimentSpec.from_dict(original)
+    assert first.fingerprint() != replace(
+        first, strategy_manifest=changed_manifest
+    ).fingerprint()
+    assert first.fingerprint() != replace(first, evaluation_protocol_version=2).fingerprint()
+    with pytest.raises(ValueError, match="current strategy configuration"):
+        ExperimentSpec.from_dict(changed)
+    for manifest in (
+        {"uniform": canonical_strategy_manifest("uniform")},
+        {**original["strategy_manifest"], "cold": canonical_strategy_manifest("cold")},
+    ):
+        with pytest.raises(ValueError, match="keys must exactly match"):
+            ExperimentSpec.from_dict({**original, "strategy_manifest": manifest})
+    with pytest.raises(ValueError, match="unsupported evaluation_protocol_version"):
+        ExperimentSpec.from_dict({**original, "evaluation_protocol_version": 2})
+
+
+def test_evaluation_rejects_incomplete_provenance(monkeypatch: pytest.MonkeyPatch) -> None:
+    spec = ExperimentSpec.from_dict(spec_payload())
+
+    def incomplete(*args: object, **kwargs: object) -> dict[str, object]:
+        return {
+            "round_details": {
+                "target_rounds": [1238],
+                "delta_mean_matches_vs_uniform": {"hot": [0.0]},
+            }
+        }
+
+    monkeypatch.setattr("lotto_lab.holdout.compare_strategies", incomplete)
+    with pytest.raises(ValueError, match="evaluation target range mismatch"):
+        evaluate_holdout(make_draws(1238), spec)
+
+
+def test_round_level_holdout_inference_is_deterministic(monkeypatch: pytest.MonkeyPatch) -> None:
+    spec = ExperimentSpec.from_dict(spec_payload())
+
+    def synthetic(*args: object, **kwargs: object) -> dict[str, object]:
+        return {
+            "round_details": {
+                "target_rounds": [1237, 1238],
+                "delta_mean_matches_vs_uniform": {"hot": [1.0, 3.0]},
+            }
+        }
+
+    monkeypatch.setattr("lotto_lab.holdout.compare_strategies", synthetic)
+    inference = evaluate_holdout(make_draws(1238), spec)["holdout_inference"]
+    assert inference["method"] == "paired_round_normal_approximation_v1"
+    result = inference["candidate_results"]["hot"]
+    assert result == {
+        "effect": 2.0,
+        "standard_error": 1.0,
+        "ci95_lower": pytest.approx(0.04),
+        "ci95_upper": pytest.approx(3.96),
+        "rounds": 2,
+    }

@@ -106,7 +106,7 @@ def command_holdout_status(args: argparse.Namespace) -> None:
     try:
         spec = load_experiment_spec(args.spec)
         result = holdout_status(_repository(args.db).list_rounds(), spec)
-    except ValueError as error:
+    except (ValueError, TypeError) as error:
         raise SystemExit(str(error)) from error
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
 
@@ -115,7 +115,7 @@ def command_holdout_evaluate(args: argparse.Namespace) -> None:
     try:
         spec = load_experiment_spec(args.spec)
         result = evaluate_holdout(_repository(args.db).list_draws(), spec)
-    except ValueError as error:
+    except (ValueError, TypeError) as error:
         raise SystemExit(str(error)) from error
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
 

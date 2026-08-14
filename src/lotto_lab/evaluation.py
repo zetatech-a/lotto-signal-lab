@@ -89,6 +89,7 @@ def compare_strategies(
     min_history: int = 200,
     period_size: int = 200,
     target_start_round: int | None = None,
+    include_round_details: bool = False,
 ) -> dict[str, object]:
     if seed_count <= 0:
         raise ValueError("seed_count must be > 0")
@@ -194,7 +195,7 @@ def compare_strategies(
         period_results[name] = blocks
 
     probabilities = random_match_probabilities()
-    return {
+    result: dict[str, object] = {
         "based_on_round": draws[-1].round,
         "draw_count": len(draws),
         "min_history": min_history,
@@ -210,3 +211,21 @@ def compare_strategies(
         "period_results": period_results,
         "interval_interpretation": INTERVAL_INTERPRETATION,
     }
+    if include_round_details:
+        round_deltas: dict[str, list[float]] = {}
+        baseline_traces = traces["uniform"]
+        for name in strategies:
+            if name == "uniform":
+                continue
+            round_deltas[name] = [
+                statistics.fmean(
+                    candidate[index].matches - baseline[index].matches
+                    for candidate, baseline in zip(traces[name], baseline_traces)
+                )
+                for index in range(len(target_rounds))
+            ]
+        result["round_details"] = {
+            "target_rounds": list(target_rounds),
+            "delta_mean_matches_vs_uniform": round_deltas,
+        }
+    return result
