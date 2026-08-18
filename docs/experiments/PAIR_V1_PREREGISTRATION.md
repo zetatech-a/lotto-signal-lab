@@ -1,8 +1,9 @@
 # PAIR_V1_PREREGISTRATION.md
 
 **Strategy:** `pair-v1`  
-**Status:** FROZEN DESIGN  
+**Status:** PRE-IMPLEMENTATION PREREGISTRATION — FROZEN ON MERGE TO MAIN\
 **Purpose:** Pre-implementation hypothesis preregistration  
+**Freeze point:** the commit that first lands this preregistration document on the `main` branch\
 **Development diagnostic data:** rounds `1..1236`  
 **Development evaluation targets:** rounds `331..1236`  
 **Prospective experiment:** not yet instantiated  
@@ -412,7 +413,7 @@ a_e=2.
 
 No pair can receive more than twice the anchor weight of a null-or-negative pair.
 
-The constants `3` and `2` are frozen.
+The constants `3` and `2` become frozen at the document freeze point.
 
 They must not be optimized against development results.
 
@@ -549,9 +550,9 @@ It does not require `pair-v1` and the repository's `uniform` strategy to produce
 
 ---
 
-## 13. Frozen strategy parameters
+## 13. Strategy parameters at the freeze point
 
-| Parameter | Frozen value |
+| Parameter | Registered value |
 |---|---|
 | strategy | `pair-v1` |
 | direction | positive only |
@@ -577,9 +578,9 @@ It does not require `pair-v1` and the repository's `uniform` strategy to produce
 | temperature | none |
 | smoothing/pseudocount | none |
 
-These values define `pair-v1`.
+These values define `pair-v1` at the freeze point specified in this document.
 
-Changing any behavior-affecting entry creates a different strategy and must not retain the `pair-v1` research identity.
+After the freeze point, changing any behavior-affecting entry creates a different strategy and must not retain the `pair-v1` research identity.
 
 ---
 
@@ -813,15 +814,18 @@ Such analyses may motivate a separately named future hypothesis such as `pair-v2
 
 ## 20. Prospective registration timing
 
-The mathematical and behavioral definition of `pair-v1` is frozen by this document.
+The mathematical and behavioral definition of `pair-v1` becomes frozen at the commit that first lands this preregistration document on the `main` branch. It is not frozen merely because the document exists on a review branch.
+
+The `pair-v1` development diagnostic MUST NOT be run or inspected before that freeze point. Review-driven corrections and methodological strengthening may retain the `pair-v1` identity before the freeze point only while no `pair-v1` development evaluation or prospective evaluation has been executed or inspected.
 
 However, the prospective holdout boundary is not assigned until all of the following have occurred:
 
-1. the implementation conforms to this document;
-2. required invariant and regression tests pass;
-3. the development diagnostic is executed exactly once for the registered `pair-v1` definition;
-4. the development decision rule passes;
-5. the final strategy manifest and implementation identity are available for fingerprinting.
+1. this preregistration has reached its freeze point;
+2. the implementation conforms to the frozen document;
+3. required invariant and regression tests pass;
+4. the development diagnostic is executed exactly once for the registered `pair-v1` definition;
+5. the development decision rule passes;
+6. the final strategy manifest and implementation identity are available for fingerprinting.
 
 Let \(N\) be the latest Lotto round whose result is already publicly available when the final prospective ExperimentSpec and its fingerprint are committed.
 
@@ -1109,7 +1113,7 @@ The `pair-v1` strategy manifest must expose every behavior-affecting strategy ch
 
 At minimum, the manifest must encode the following semantics:
 
-| Manifest semantic | Frozen value |
+| Manifest semantic | Required value |
 |---|---|
 | mode | `positive_pair_deviance` |
 | pair universe | `all_unordered_1_to_45` |
@@ -1172,13 +1176,15 @@ These invariants must be verified before development performance is used to make
 
 ## 30. Change-control rule
 
-This document defines the research identity `pair-v1`.
+This document defines the research identity `pair-v1`. Its freeze point is the commit that first lands this preregistration document on the `main` branch.
 
-A code correction whose only purpose is to make an implementation conform exactly to this preregistered document is allowed before prospective registration. Any development result produced by a non-conforming implementation is invalid and must not be interpreted as `pair-v1` evidence.
+Before the freeze point, review-driven corrections and methodological strengthening are allowed and retain the `pair-v1` identity, but only while no `pair-v1` development evaluation or prospective evaluation has been executed or inspected. The `pair-v1` development diagnostic MUST NOT be run before the freeze point.
 
-A change to the hypothesis, null model, score equation, history semantics, score clipping, pair weighting, ticket weighting, sampler distribution, direction, development gate, primary metric, seed count, prospective horizon, or prospective decision rule is a behavior-affecting research change.
+After the freeze point, a change to the hypothesis, null model, score equation, history semantics, score clipping, pair weighting, ticket weighting, sampler distribution, direction, development gate, primary metric, seed count, prospective horizon, or prospective decision rule is a behavior-affecting research change.
 
-Such a change must create a separately named hypothesis, normally `pair-v2`.
+Such a post-freeze change must create a separately named hypothesis, normally `pair-v2`.
+
+A code correction whose only purpose is to make an implementation conform exactly to the frozen preregistration is allowed before prospective registration. Any development result produced by a non-conforming implementation is invalid and must not be interpreted as `pair-v1` evidence.
 
 After prospective ExperimentSpec registration, any behavior-affecting strategy or evaluation change invalidates that prospective experiment for the changed strategy and requires a new fingerprint and a new future unrevealed holdout boundary.
 
@@ -1206,6 +1212,6 @@ Any modified strategy must use a new future holdout beginning after its own fina
 
 `pair-v1` is exactly:
 
-> For each target round, count every unordered number pair over all previous Lotto draws. Compare each count with the fixed IID uniform 6-of-45 null probability \(1/66\) using signed root binomial deviance. Discard negative evidence, cap positive score at 3, convert score to pair weight \(2^{s/3}\), and sample a ticket from the additive mean of its 15 pair weights using a weighted anchor pair followed by a uniform four-number fill. Pair weights are constrained to `[1,2]`. Evaluate the registered primary metric `delta_mean_matches_mean` against uniform using 100 paired seeds; the underlying raw ticket-level outcome is `matches = |T \cap Y|`. Development targets are permanently `331..1236` (\(R=906\)). Development requires the lower bound \(L_{dev}=\Delta_{dev}-1.95996398454\,SE_{dev}\) of the two-sided approximate 95% round-level uncertainty interval to exceed zero, positive median seed delta, and at least 10 positive predefined 50-round periods out of 18. This gate is a development diagnostic, not prospective confirmation. If development passes, register exactly one future `pair-v1` candidate against uniform for 100 unrevealed rounds. Prospective support requires the existing two-sided 95% round-level CI lower bound to exceed zero and both predefined 50-round holdout blocks to have positive delta.
+> For each target round, count every unordered number pair over all previous Lotto draws. Compare each count with the fixed IID uniform 6-of-45 null probability \(1/66\) using signed root binomial deviance. Discard negative evidence, cap positive score at 3, convert score to pair weight \(2^{s/3}\), and sample a ticket from the additive mean of its 15 pair weights using a weighted anchor pair followed by a uniform four-number fill. Pair weights are constrained to `[1,2]`. Evaluate the registered primary metric `delta_mean_matches_mean` against uniform using 100 paired seeds; the underlying raw ticket-level outcome is `matches = |T \cap Y|`. Development targets are permanently `331..1236` (\(R=906\)). Development requires the lower bound \(L_{dev}=\Delta_{dev}-1.95996398454\,SE_{dev}\) of the two-sided approximate 95% round-level uncertainty interval to exceed zero, positive median seed delta, and at least 10 positive predefined 50-round periods out of 18. This gate is a development diagnostic, not prospective confirmation. This preregistration freezes when its document first lands on `main`, and the development diagnostic must not run before then; review changes made before that point and before any evaluation is executed or inspected finalize `pair-v1`. After the freeze point, any behavior-affecting research change requires a new identity such as `pair-v2`. If development passes, register exactly one future `pair-v1` candidate against uniform for 100 unrevealed rounds. Prospective support requires the existing two-sided 95% round-level CI lower bound to exceed zero and both predefined 50-round holdout blocks to have positive delta.
 
-Anything behaviorally different from the above is not `pair-v1`.
+After the freeze point, anything behaviorally different from the above is not `pair-v1`.
