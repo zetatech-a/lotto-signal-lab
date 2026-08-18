@@ -605,23 +605,25 @@ Pathwise equality between `pair-v1` and `uniform` is not required.
 
 ## 15. Primary metric
 
-The sole primary metric is
+The registered ExperimentSpec primary metric is
 
-`mean_matches`.
+`delta_mean_matches_mean`.
 
-For ticket \(T\) and winning-number set \(Y\),
+For ticket \(T\) and winning-number set \(Y\), the raw ticket-level outcome is
 
 \[
 M(T,Y)=|T\cap Y|.
 \]
 
-Thus
+Thus the raw outcome
 
 \[
 M\in\{0,1,2,3,4,5,6\}.
 \]
 
-Bonus matches, prize tiers, jackpot amount, monetary return, ticket sales, and payout size are not part of the primary metric.
+The registered primary metric `delta_mean_matches_mean` is the mean paired difference in this raw match outcome between `pair-v1` and `uniform`, using the round-level and seed-level aggregation defined below. The raw ticket-level outcome `matches` is not itself the registered primary metric.
+
+Bonus matches, prize tiers, jackpot amount, monetary return, ticket sales, and payout size are not part of either the raw outcome or the primary metric.
 
 The primary metric must not be changed after development results are observed.
 
@@ -639,6 +641,12 @@ Because `min_history = 330`, eligible target rounds are
 
 \[
 331..1236.
+\]
+
+The number of eligible development target rounds is therefore
+
+\[
+R=906.
 \]
 
 Every target is evaluated strict walk-forward:
@@ -675,17 +683,44 @@ M^{pair}_{r,s}
 M^{uniform}_{r,s}.
 \]
 
+For every development target round, define the round-level delta by averaging over the 100 registered paired seeds:
+
+\[
+d_r
+=
+\frac1{100}
+\sum_{s=1}^{100}d_{r,s}.
+\]
+
 Overall development delta is
 
 \[
 \Delta_{dev}
 =
 \frac1R
-\sum_r
-\left(
-\frac1S\sum_s d_{r,s}
-\right).
+\sum_{r=331}^{1236}d_r,
+\qquad R=906.
 \]
+
+Let \(s_{d,dev}\) be the sample standard deviation of the 906 round-level deltas \(d_r\). Define
+
+\[
+SE_{dev}
+=
+\frac{s_{d,dev}}{\sqrt{R}}
+\]
+
+and
+
+\[
+L_{dev}
+=
+\Delta_{dev}
+-
+1.95996398454\,SE_{dev}.
+\]
+
+The corresponding interval \(\Delta_{dev}\pm1.95996398454\,SE_{dev}\) is a two-sided approximate 95% round-level uncertainty interval. It is a development diagnostic, not prospective confirmation; the 100 seeds are paired simulation replicates and are not treated as independent future observations.
 
 For each seed,
 
@@ -719,7 +754,7 @@ are included in the overall and seed-level metrics but excluded from the full-pe
 `pair-v1` passes the development diagnostic only if all three conditions hold:
 
 \[
-\Delta_{dev}>0
+L_{dev}>0
 \]
 
 and
@@ -738,7 +773,7 @@ Equivalently,
 
 Equality with zero does not count as positive.
 
-These criteria are a development gate, not confirmatory statistical evidence.
+These criteria, including the uncertainty-bound condition, are a development gate, not confirmatory statistical evidence or prospective confirmation.
 
 No development p-value is required for promotion.
 
@@ -821,7 +856,7 @@ Once the boundary is instantiated, the prospective ExperimentSpec must use:
 | min_history | `330` |
 | period_size | `50` |
 | min_holdout_rounds | `100` |
-| primary_metric | `mean_matches` |
+| primary_metric | `delta_mean_matches_mean` |
 | evaluation_protocol_version | `1` |
 | holdout start | \(N+1\) |
 | holdout end | \(N+100\) |
@@ -1171,6 +1206,6 @@ Any modified strategy must use a new future holdout beginning after its own fina
 
 `pair-v1` is exactly:
 
-> For each target round, count every unordered number pair over all previous Lotto draws. Compare each count with the fixed IID uniform 6-of-45 null probability \(1/66\) using signed root binomial deviance. Discard negative evidence, cap positive score at 3, convert score to pair weight \(2^{s/3}\), and sample a ticket from the additive mean of its 15 pair weights using a weighted anchor pair followed by a uniform four-number fill. Pair weights are constrained to `[1,2]`. Evaluate against uniform using 100 paired seeds. Development targets are permanently `331..1236`. Development requires positive overall delta, positive median seed delta, and at least 10 positive predefined 50-round periods out of 18. If development passes, register exactly one future `pair-v1` candidate against uniform for 100 unrevealed rounds. Prospective support requires the existing two-sided 95% round-level CI lower bound to exceed zero and both predefined 50-round holdout blocks to have positive delta.
+> For each target round, count every unordered number pair over all previous Lotto draws. Compare each count with the fixed IID uniform 6-of-45 null probability \(1/66\) using signed root binomial deviance. Discard negative evidence, cap positive score at 3, convert score to pair weight \(2^{s/3}\), and sample a ticket from the additive mean of its 15 pair weights using a weighted anchor pair followed by a uniform four-number fill. Pair weights are constrained to `[1,2]`. Evaluate the registered primary metric `delta_mean_matches_mean` against uniform using 100 paired seeds; the underlying raw ticket-level outcome is `matches = |T \cap Y|`. Development targets are permanently `331..1236` (\(R=906\)). Development requires the lower bound \(L_{dev}=\Delta_{dev}-1.95996398454\,SE_{dev}\) of the two-sided approximate 95% round-level uncertainty interval to exceed zero, positive median seed delta, and at least 10 positive predefined 50-round periods out of 18. This gate is a development diagnostic, not prospective confirmation. If development passes, register exactly one future `pair-v1` candidate against uniform for 100 unrevealed rounds. Prospective support requires the existing two-sided 95% round-level CI lower bound to exceed zero and both predefined 50-round holdout blocks to have positive delta.
 
 Anything behaviorally different from the above is not `pair-v1`.
